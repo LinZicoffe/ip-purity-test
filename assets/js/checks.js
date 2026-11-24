@@ -350,9 +350,11 @@
       else status = 'blocked';
 
       var regionCodes = DATA.regions[svc.regions].codes;
+      var regionListed = null;
       var regionText = '无法判定';
       if (tReachable) {
         var inList = regionCodes.has(String(t.loc || '').toUpperCase());
+        regionListed = inList;
         regionText = inList ? '所在地区在支持列表内' : '所在地区不在支持列表内';
         if (!inList) notes.push('Cloudflare 判定所在地区为 ' + (t.loc || '未知') + '，不在 ' + svc.vendor + ' 的支持列表内');
         if (intel && intel.geo && intel.geo.country && intel.geo.country !== String(t.loc || '').toUpperCase()) {
@@ -384,7 +386,8 @@
             : api.status > 0 ? '已拒绝 · HTTP ' + api.status
             : '不可达 · ' + (api.error ? api.error.msg : '无响应')
         },
-        regionText: regionText
+        regionText: regionText,
+        regionListed: regionListed
       };
     },
 

@@ -69,8 +69,13 @@
       intel: results.intel || null,
       consistency: consistencyData(),
       webrtc: CHECKS.classifyAddresses(results.webrtc, results.exit && results.exit.ip),
-      services: verdicts().filter(function (v) { return v.verdict; }).map(function (v) {
-        return { name: v.svc.name, status: v.verdict.status };
+      services: verdicts().map(function (v) {
+        var verdict = v.verdict;
+        return {
+          name: v.svc.name,
+          status: verdict ? verdict.status : null,
+          regionListed: verdict && typeof verdict.regionListed === 'boolean' ? verdict.regionListed : null
+        };
       })
     });
     UI.renderScore(score);

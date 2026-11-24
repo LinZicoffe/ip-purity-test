@@ -580,6 +580,26 @@ code,
   color: var(--muted);
 }
 
+.score-group + .score-group {
+  margin-top: 14px;
+}
+
+.score-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 2px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.score-footnote {
+  margin-top: 14px;
+}
+
 .ded--hit {
   color: var(--bad);
   font-weight: 700;

@@ -151,7 +151,7 @@
             '<text class="gauge-unit" x="60" y="78" text-anchor="middle">/ 100</text>' +
           '</svg>' +
           '<div class="score-text"><div class="grade grade--' + g.key + '">' + esc(g.label) + '</div><p>' + esc(g.text) + '</p>' +
-          '<p class="note">由 IP 类型、风险标记、出口一致性和 WebRTC 泄漏综合得出，仅供参考。</p></div>' +
+          (score.note ? '<p class="note">' + esc(score.note) + '</p>' : '') + '</div>' +
         '</div>';
       var arc = body.querySelector('.gauge-value');
       if (arc) {
@@ -309,14 +309,42 @@
     renderDetail: function (score) {
       var body = byId('detail-body');
       if (!score) return;
-      var items = score.items.map(function (i) {
-        var ded = i.missing
+      function dedHtml(i) {
+        if (i.missing) return '<span class="ded--miss">数据不足</span>';
+        if (i.absorbed) return '<span class="ded--miss">已合并</span>';
+        var n = i.deduction || 0;
+        return '<span class="' + (n > 0 ? 'ded--hit' : 'ded--zero') + '">' + (n > 0 ? '-' + n : '0') + '</span>';
+      }
+      function rowHtml(i) {
+        return '<li><span>' + esc(i.label) + '</span>' + dedHtml(i) + '<span class="ev">' + esc(i.evidence || '') + '</span></li>';
+      }
+      var groups = [];
+      var index = {};
+      (score.items || []).forEach(function (item) {
+        var name = item.group || '其他';
+        if (index[name] == null) {
+          index[name] = groups.length;
+          groups.push({ name: name, items: [] });
+        }
+        groups[index[name]].items.push(item);
+      });
+      var html = groups.map(function (g) {
+        var allMiss = g.items.length > 0 && g.items.every(function (i) { return i.missing; });
+        var anyMiss = g.items.some(function (i) { return i.missing; });
+        var sub = g.items.reduce(function (s, i) { return s + (i.deduction || 0); }, 0);
+        var subHtml = allMiss
           ? '<span class="ded--miss">数据不足</span>'
-          : '<span class="' + (i.deduction > 0 ? 'ded--hit' : 'ded--zero') + '">' + (i.deduction ? (i.deduction > 0 ? '-' : '+') + Math.abs(i.deduction) : '0') + '</span>';
-        return '<li><span>' + esc(i.label) + '</span>' + ded + '<span class="ev">' + esc(i.evidence || '') + '</span></li>';
+          : anyMiss && sub === 0
+            ? '<span class="ded--miss">未扣分</span>'
+            : '<span class="' + (sub > 0 ? 'ded--hit' : 'ded--zero') + '">' + (sub > 0 ? '-' + sub : '0') + '</span>';
+        return '<section class="score-group"><div class="score-group-head"><span>' + esc(g.name) + '</span>' + subHtml + '</div><ul class="items">' +
+          g.items.map(rowHtml).join('') + '</ul></section>';
       }).join('');
-      body.innerHTML = '<ul class="items">' + items + '</ul>' +
-        (score.advice && score.advice.length ? '<p class="advice-title">建议</p><ul class="advice">' + score.advice.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul>' : '');
+      if (score.footnote) html += '<p class="note score-footnote">' + esc(score.footnote) + '</p>';
+      if (score.advice && score.advice.length) {
+        html += '<p class="advice-title">建议</p><ul class="advice">' + score.advice.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul>';
+      }
+      body.innerHTML = html;
     },
 
     renderFooterLinks: function (ip) {
