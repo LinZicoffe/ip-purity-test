@@ -92,9 +92,42 @@ assets/js/app.js        检测编排与增量渲染
 
 页面没有后端，不写入 Cookie，不收集或上传任何检测结果。所有请求由访问者浏览器直接发往 Cloudflare、IPinfo、ipify、ipapi.co、OpenAI、Anthropic 等第三方服务，同时也会发起 STUN 请求用于 WebRTC 检测。
 
+## 开源协议
+
+本项目以 MIT 协议开源。你可以自由使用、修改和分发，但必须在副本中保留下面的版权声明和许可声明。
+
+```
+MIT License
+
+Copyright (c) 2026 东林 梁
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+完整文本同时放在仓库根目录的 [LICENSE](LICENSE)。
+
 ## 更新日志
 
 ### 2026-11-24
+
+*V5*：
+- 文档更新：加入 MIT 开源协议（README.md、LICENSE）
 
 *V4*：
 - 文档更新：补充出口无法判断、WebRTC 无法判断、情报地址校验和静态资源版本号的说明（README.md）
