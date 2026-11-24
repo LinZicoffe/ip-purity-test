@@ -269,6 +269,12 @@
       } else if (state === 'unsupported') {
         leak.missing = true;
         leak.evidence = '浏览器不支持 WebRTC';
+      } else if (webrtc.settled === false) {
+        leak.missing = true;
+        leak.evidence = '候选地址尚未收集完，不能判断是否泄漏';
+      } else if (webrtc.exitKnown === false) {
+        leak.missing = true;
+        leak.evidence = '没有出口 IP，无法判断是否泄漏';
       } else {
         leak.missing = true;
         leak.evidence = '没有足够的候选地址，不能判断是否泄漏';
@@ -288,7 +294,10 @@
       }
 
       if (!typeKnown) {
-        return pack(null, null, ['未能获取 IP 类型信息（所有 IP 情报来源均不可用），无法计算纯净度评分。'], '');
+        var named = intel && intel.source;
+        return pack(null, null, [named
+          ? '已从「' + named + '」拿到资料，但没有判定出 IP 类型，无法计算纯净度评分。'
+          : '未能获取 IP 类型信息（所有 IP 情报来源均不可用），无法计算纯净度评分。'], '');
       }
 
       var spent = sumOf(items);
@@ -376,6 +385,10 @@
       if (blocked.length) advice.push(names(blocked) + ' 无法连接。请检查代理是否覆盖对应域名，或稍后重新检测。');
       if (region.length) advice.push(names(region) + ' 在当前网络下地区受限，请换到受支持地区的节点后再测。');
       if (unlisted.length) advice.push(names(unlisted) + '的接口有响应，但 Cloudflare 判定的地区不在官方支持列表内，使用时仍可能被限制。');
+      var regionUnknown = services.filter(function (svc) {
+        return svc && svc.status && svc.status !== 'blocked' && svc.status !== 'region' && svc.regionListed == null;
+      });
+      if (regionUnknown.length) advice.push(names(regionUnknown) + ' 可以连接，但没有判定出所在地区，不能据此确认该地区受支持。');
       if (exitSpent > 0) {
         if ((consistency.distinctV4 >= 2) && (consistency.distinctV6 >= 2)) {
           advice.push('IPv4 和 IPv6 的出口都不一致，不同协议走了不同的网络。');

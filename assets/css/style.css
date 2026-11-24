@@ -513,7 +513,8 @@ code,
   --status: var(--ok);
 }
 
-.svc--risk {
+.svc--risk,
+.svc--unlisted {
   --status: var(--warn);
 }
 

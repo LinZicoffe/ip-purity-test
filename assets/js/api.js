@@ -76,12 +76,13 @@
               try {
                 data = r.text ? JSON.parse(r.text) : null;
               } catch (e) {
+                data = null;
                 error = r.res.ok ? 'PARSE' : 'HTTP_' + r.res.status;
               }
             }
             if (!error && !r.res.ok) error = 'HTTP_' + r.res.status;
             done({
-              ok: r.res.ok,
+              ok: r.res.ok && !error,
               status: r.res.status,
               data: data,
               latencyMs: Math.round(performance.now() - start),

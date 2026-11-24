@@ -3,8 +3,8 @@
 
   var DATA = IPQ.DATA;
   var CIRC = 2 * Math.PI * 52;
-  var STATUS_BADGE = { ok: 'badge--ok', risk: 'badge--warn', region: 'badge--bad', blocked: 'badge--bad' };
-  var TYPE_CHIP = { hosting: 'warn', isp: 'ok', business: 'muted', education: 'ok' };
+  var STATUS_BADGE = { ok: 'badge--ok', risk: 'badge--warn', unlisted: 'badge--warn', region: 'badge--bad', blocked: 'badge--bad' };
+  var TYPE_CHIP = { hosting: 'warn', isp: 'ok', business: 'muted', education: 'warn' };
   var KIND_LABEL = { public: '公网', private: '内网', mdns: 'mDNS 本地域名' };
 
   var ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
@@ -195,7 +195,14 @@
         return;
       }
       var f = intel.flags || {};
-      var chips = [chip(intel.type ? TYPE_CHIP[intel.type] || 'muted' : 'muted', intel.type ? DATA.typeLabels[intel.type] || intel.type : '类型未知')];
+      var typeKey = intel.type;
+      var typeCls = typeKey ? TYPE_CHIP[typeKey] || 'muted' : 'muted';
+      var typeText = typeKey ? DATA.typeLabels[typeKey] || typeKey : '类型未知';
+      if (f.hosting === false && intel.type === 'hosting') {
+        typeCls = 'ok';
+        typeText = '非机房';
+      }
+      var chips = [chip(typeCls, typeText)];
       [['vpn', 'VPN'], ['proxy', '代理'], ['tor', 'Tor'], ['relay', '中继']].forEach(function (x) {
         var v = f[x[0]];
         chips.push(chip(v === true ? 'bad' : v === false ? 'ok' : 'muted', v === true ? '已标记 ' + x[1] : v === false ? '无 ' + x[1] + ' 标记' : x[1] + ' 未知'));
@@ -226,13 +233,14 @@
           ['地区检查', v.regionText]
         ];
         var notes = v.notes.concat(v.risks.length ? ['命中风险标记：' + v.risks.join('、')] : []);
+        var site = /^https:\/\//i.test(svc.site || '') ? svc.site : '';
         return '<div class="svc svc--' + esc(v.status) + '">' +
           '<div class="svc-head"><div><div class="svc-name">' + esc(svc.name) + '<span class="svc-vendor">' + esc(svc.vendor) + '</span></div>' +
           '<div class="svc-sub">' + sub + '</div></div>' +
           '<span class="badge ' + STATUS_BADGE[v.status] + '">' + esc(v.label) + '</span></div>' +
           rowsHtml(rows) +
           notes.map(function (n) { return '<p class="note">' + esc(n) + '</p>'; }).join('') +
-          '<a class="btn btn--sm svc-link" href="' + svc.site + '" target="_blank" rel="noopener noreferrer">在新标签页打开 ' + esc(svc.host) + ' 实测</a>' +
+          (site ? '<a class="btn btn--sm svc-link" href="' + esc(site) + '" target="_blank" rel="noopener noreferrer">在新标签页打开 ' + esc(svc.host) + ' 实测</a>' : '') +
           '</div>';
       }).join('');
     },
@@ -251,20 +259,26 @@
       var parts = [];
       if (data.distinctV4 >= 2) parts.push(data.distinctV4 + ' 个不同的 IPv4 出口');
       if (data.distinctV6 >= 2) parts.push(data.distinctV6 + ' 个不同的 IPv6 出口');
-      var head = data.mismatch
-        ? badge('badge--warn', '检测到 ' + parts.join('，'))
-        : badge('badge--ok', '各来源出口一致');
+      var head;
+      var notes = [];
+      if (data.mismatch === true) {
+        head = badge('badge--warn', '检测到 ' + parts.join('，'));
+        notes.push('不同服务看到的出口 IP 不同，说明存在分流或多出口，部分请求可能没有经过代理。');
+      } else if (data.mismatch === false) {
+        head = badge('badge--ok', '各来源出口一致');
+      } else {
+        head = badge('badge--muted', '无法判断');
+        notes.push('同一协议内能比对的出口地址不够，无法判断是否一致。');
+      }
       var table = '<div class="table-wrap"><table class="table"><thead><tr><th>来源</th><th>地址</th><th>结果</th></tr></thead><tbody>' +
         rows.map(function (r) {
           var cls;
           var text;
           if (r.align === 'diff') { cls = 't-bad'; text = '不一致'; }
-          else if (r.align === 'single' && r.family === 'v6') { cls = 't-muted'; text = 'IPv6 地址'; }
+          else if (r.align === 'single') { cls = 't-muted'; text = '无法比对'; }
           else { cls = 't-ok'; text = r.sameAsExit ? '与出口一致' : '一致'; }
           return '<tr><td class="c-fixed">' + esc(r.source) + '</td><td>' + esc(r.ip) + '</td><td class="c-fixed ' + cls + '">' + text + '</td></tr>';
         }).join('') + '</tbody></table></div>';
-      var notes = [];
-      if (data.mismatch) notes.push('不同服务看到的出口 IP 不同，说明存在分流或多出口，部分请求可能没有经过代理。');
       if (data.dualStack) notes.push('当前是双栈网络：支持 IPv6 的网站可能通过另一个地址访问。');
       body.innerHTML = head + table + notes.map(function (n) { return '<p class="note">' + esc(n) + '</p>'; }).join('');
     },
@@ -281,11 +295,13 @@
       var notes = {
         leak: ['WebRTC 暴露了与出口 IP 不同的公网地址（已标红），真实网络可能被绕过代理访问。'],
         clean: ['未发现与出口 IP 不同的同协议公网地址。内网地址和 .local 域名不会暴露真实公网 IP。'],
-        unknown: [result.exitKnown
-          ? (result.otherFamily && result.otherFamily.length
-            ? '只收集到与出口不同协议的公网地址，不能据此判断是否泄漏。'
-            : '没有收集到任何候选地址，可能是浏览器禁用了 WebRTC 或 STUN 服务器不可达。零候选不等于一定安全。')
-          : '尚未获取到出口 IP，无法比对。'],
+        unknown: [!result.exitKnown
+          ? '尚未获取到出口 IP，无法比对。'
+          : result.settled === false
+            ? '候选地址尚未收集完，不能判断是否泄漏。'
+            : result.otherFamily && result.otherFamily.length
+              ? '只收集到与出口不同协议的公网地址，不能据此判断是否泄漏。'
+              : '没有收集到任何候选地址，可能是浏览器禁用了 WebRTC 或 STUN 服务器不可达。零候选不等于一定安全。'],
         unsupported: []
       };
       var extra = [];
@@ -309,7 +325,9 @@
     renderDetail: function (score) {
       var body = byId('detail-body');
       if (!score) return;
+      var unscored = score.total === null;
       function dedHtml(i) {
+        if (unscored) return '<span class="ded--miss">' + (i.missing ? '数据不足' : '未计入') + '</span>';
         if (i.missing) return '<span class="ded--miss">数据不足</span>';
         if (i.absorbed) return '<span class="ded--miss">已合并</span>';
         var n = i.deduction || 0;
@@ -332,7 +350,9 @@
         var allMiss = g.items.length > 0 && g.items.every(function (i) { return i.missing; });
         var anyMiss = g.items.some(function (i) { return i.missing; });
         var sub = g.items.reduce(function (s, i) { return s + (i.deduction || 0); }, 0);
-        var subHtml = allMiss
+        var subHtml = unscored
+          ? '<span class="ded--miss">未计入</span>'
+          : allMiss
           ? '<span class="ded--miss">数据不足</span>'
           : anyMiss && sub === 0
             ? '<span class="ded--miss">未扣分</span>'

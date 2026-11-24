@@ -16,7 +16,12 @@
   var STUN_SERVERS = ['stun.cloudflare.com:3478', 'stun.l.google.com:19302', 'stun.miwifi.com:3478', 'stun.qq.com:3478'];
 
   function isV4(ip) {
-    return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip || '');
+    if (typeof ip !== 'string' || !/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return false;
+    var parts = ip.split('.');
+    for (var i = 0; i < 4; i++) {
+      if (Number(parts[i]) > 255) return false;
+    }
+    return true;
   }
 
   function extractAsn(str) {
@@ -82,14 +87,14 @@
       route: null,
       hostname: null,
       timezone: null,
-      type: d.hosting ? 'hosting' : null,
+      type: d.hosting === true ? 'hosting' : null,
       flags: {
-        hosting: !!d.hosting,
+        hosting: flag(d.hosting),
         vpn: null,
-        proxy: !!d.proxy,
+        proxy: flag(d.proxy),
         tor: null,
         relay: null,
-        mobile: !!d.mobile
+        mobile: flag(d.mobile)
       },
       geo: {
         country: d.countryCode || null,
@@ -107,7 +112,10 @@
     var text = [base.org, base.asnName, base.hostname].filter(Boolean).join(' ').toLowerCase();
     return DATA.keywords.some(function (k) {
       k = k.toLowerCase();
-      if (/^[a-z0-9]{1,4}$/.test(k)) return new RegExp('(^|[^a-z0-9])' + k + '([^a-z0-9]|$)').test(text);
+      if (/[a-z0-9]/.test(k)) {
+        var escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp('(^|[^a-z0-9])' + escaped + '([^a-z0-9]|$)').test(text);
+      }
       return text.indexOf(k) !== -1;
     }) ? true : null;
   }
@@ -127,8 +135,12 @@
   function isPrivate(addr) {
     var a = addr.toLowerCase();
     if (a.indexOf('::ffff:') === 0) return isPrivateV4(a.slice(7));
-    if (a === '::1' || a.indexOf('fc') === 0 || a.indexOf('fd') === 0 || a.indexOf('fe80:') === 0) return true;
+    if (a === '::1' || a.indexOf('fc') === 0 || a.indexOf('fd') === 0 || isLinkLocalV6(a)) return true;
     return isV4(a) ? isPrivateV4(a) : false;
+  }
+
+  function isLinkLocalV6(addr) {
+    return /^fe[89ab][0-9a-f](?::|$)/i.test(addr);
   }
 
   function isIpLike(ip) {
@@ -175,7 +187,10 @@
   }
 
   function mismatchOrFail(r) {
-    return r && r.ok && r.data && (r.data.ip || r.data.query) ? '返回的是另一个出口地址，已忽略' : fail(r);
+    if (!(r && r.ok && r.data)) return fail(r);
+    if (r.data.status && r.data.status !== 'success') return r.data.message || fail(r);
+    if (r.data.ip || r.data.query) return '返回的是另一个出口地址，已忽略';
+    return fail(r);
   }
 
   function apiHost(url) {
@@ -241,7 +256,7 @@
       fallback = fallback || {};
       var r = await API.request('https://ipinfo.io/widget/demo/' + encodeURIComponent(ip), { signal: signal });
       if (signal.aborted) return null;
-      if (r.ok && r.data && r.data.data) return fromIpinfo(ip, r.data.data);
+      if (r.ok && r.data && r.data.data && sameIp(r.data.data.ip, ip)) return fromIpinfo(ip, r.data.data);
       var errors = ['IPinfo：' + fail(r)];
 
       // HTTP only: skipped on HTTPS pages because of mixed-content blocking.
@@ -337,30 +352,35 @@
         [['hosting', '机房 IP'], ['vpn', 'VPN'], ['proxy', '代理'], ['tor', 'Tor'], ['relay', '中继']].forEach(function (x) {
           if (f[x[0]] === true) risks.push(x[1]);
         });
-        if (intel.source === null) notes.push('未能获取 IP 类型信息，无法评估风控风险');
+        var assessed = ['hosting', 'vpn', 'proxy', 'tor', 'relay'].some(function (key) { return f[key] != null; });
+        if (intel.source === null || !assessed) notes.push('未能获取 IP 类型信息，无法评估风控风险');
       } else if (intel === undefined) {
         notes.push('IP 类型尚未判定，结果稍后更新');
       } else {
         notes.push('未能获取 IP 类型信息，无法评估风控风险');
       }
 
-      var status;
-      if (regionHit) status = 'region';
-      else if (apiReachable) status = risks.length ? 'risk' : 'ok';
-      else status = 'blocked';
-
       var regionCodes = DATA.regions[svc.regions].codes;
       var regionListed = null;
       var regionText = '无法判定';
-      if (tReachable) {
-        var inList = regionCodes.has(String(t.loc || '').toUpperCase());
+      if (loc) {
+        var inList = regionCodes.has(loc);
         regionListed = inList;
         regionText = inList ? '所在地区在支持列表内' : '所在地区不在支持列表内';
-        if (!inList) notes.push('Cloudflare 判定所在地区为 ' + (t.loc || '未知') + '，不在 ' + svc.vendor + ' 的支持列表内');
-        if (intel && intel.geo && intel.geo.country && intel.geo.country !== String(t.loc || '').toUpperCase()) {
-          notes.push('IP 数据库记录的地区（' + intel.geo.country + '）与 ' + svc.host + ' 判定的地区（' + t.loc + '）不一致');
+        if (!inList) notes.push('Cloudflare 判定所在地区为 ' + loc + '，不在 ' + svc.vendor + ' 的支持列表内');
+        if (intelApplies && intel && intel.geo && intel.geo.country && String(intel.geo.country).toUpperCase() !== loc) {
+          notes.push('IP 数据库记录的地区（' + intel.geo.country + '）与 ' + svc.host + ' 判定的地区（' + loc + '）不一致');
         }
+      } else if (tReachable) {
+        regionText = '所在地区无法判定';
       }
+
+      var status;
+      if (regionHit) status = 'region';
+      else if (!apiReachable) status = 'blocked';
+      else if (risks.length) status = 'risk';
+      else if (regionListed === false) status = 'unlisted';
+      else status = 'ok';
       if (!tReachable) notes.push(svc.host + ' 未连通（' + (trace.error ? trace.error.msg : '无有效数据') + '），请在浏览器中实际打开确认');
       else if (!apiReachable && api.status === 0) {
         notes.push(svc.host + ' 可以访问，但 ' + apiHost(svc.api) + ' 连接失败（' + (api.error ? api.error.msg : '无响应') + '）。常见原因：代理规则没有覆盖该域名、网络拦截或 DNS 问题');
@@ -368,7 +388,13 @@
       if (status === 'region') notes.push(svc.vendor + ' 的接口返回了地区限制（HTTP 403），当前出口所在地区不受支持');
       if (api.status === 403 && status === 'blocked') notes.push(svc.vendor + ' 拒绝了来自该 IP 的请求（HTTP 403）');
 
-      var labels = { ok: '可直连', risk: '可连接但有风控风险', region: '地区受限', blocked: '无法连接' };
+      var labels = {
+        ok: '可直连',
+        risk: '可连接但有风控风险',
+        unlisted: '可连接，地区不在支持列表',
+        region: '地区受限',
+        blocked: '无法连接'
+      };
       return {
         status: status,
         label: labels[status],
@@ -383,6 +409,7 @@
         api: {
           reachable: apiReachable,
           text: apiReachable ? '可达 · ' + api.latencyMs + ' ms'
+            : api.error && api.error.code === 'PARSE' ? '不可达 · 返回内容无法解析'
             : api.status > 0 ? '已拒绝 · HTTP ' + api.status
             : '不可达 · ' + (api.error ? api.error.msg : '无响应')
         },
@@ -393,12 +420,13 @@
 
     ipv6: async function (signal) {
       var r = await API.request('https://api6.ipify.org?format=json', { timeout: 4000, signal: signal });
-      return r.ok && r.data && r.data.ip ? r.data.ip : null;
+      var ip = r.ok && r.data ? r.data.ip : null;
+      return ip && isIpLike(ip) ? ip : null;
     },
 
     webrtc: function (signal) {
       return new Promise(function (resolve) {
-        if (!window.RTCPeerConnection) return resolve({ supported: false, addresses: [] });
+        if (!window.RTCPeerConnection) return resolve({ supported: false, addresses: [], settled: true });
         var pcs = [];
         var closeAll = function () {
           pcs.forEach(function (pc) { try { pc.close(); } catch (e) {} });
@@ -409,11 +437,11 @@
           });
         } catch (e) {
           closeAll();
-          return resolve({ supported: false, addresses: [] });
+          return resolve({ supported: false, addresses: [], settled: true });
         }
         if (signal.aborted) {
           closeAll();
-          return resolve({ supported: true, addresses: [] });
+          return resolve({ supported: true, addresses: [], settled: false });
         }
         var addresses = [];
         var finished = false;
@@ -429,19 +457,19 @@
             } catch (e) {}
           });
         };
-        var finish = function () {
+        var finish = function (why) {
           if (finished) return;
           finished = true;
           cleanup();
-          resolve({ supported: true, addresses: addresses });
+          resolve({ supported: true, addresses: addresses, settled: why === 'done' });
         };
-        var onAbort = finish;
-        var timer = setTimeout(finish, 6000);
+        var onAbort = function () { finish('abort'); };
+        var timer = setTimeout(function () { finish('timeout'); }, 6000);
         signal.addEventListener('abort', onAbort);
 
         var step = function () {
           pending--;
-          if (pending <= 0) finish();
+          if (pending <= 0) finish('done');
         };
 
         pcs.forEach(function (pc) {
@@ -484,14 +512,16 @@
       var leaked = pub.filter(function (i) {
         return sameFamily(i.address) && !sameIp(i.address, exitIp);
       });
+      var settled = !raw || raw.settled !== false;
       var state;
       if (!supported) state = 'unsupported';
-      else if (!exitIp && pub.length) state = 'unknown';
+      else if (!exitIp) state = 'unknown';
       else if (leaked.length) state = 'leak';
       else if (!items.length) state = 'unknown';
+      else if (!settled) state = 'unknown';
       else if (otherFamily.length && !pub.some(function (i) { return sameFamily(i.address); })) state = 'unknown';
       else state = 'clean';
-      return { state: state, items: items, leaked: leaked, exitKnown: !!exitIp, otherFamily: otherFamily };
+      return { state: state, items: items, leaked: leaked, exitKnown: !!exitIp, otherFamily: otherFamily, settled: settled };
     },
 
     summarizeExits: function (rows, exitIp) {

@@ -12,7 +12,12 @@
   var results = null;
 
   function isV4(ip) {
-    return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip || '');
+    if (typeof ip !== 'string' || !/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return false;
+    var parts = ip.split('.');
+    for (var i = 0; i < 4; i++) {
+      if (Number(parts[i]) > 255) return false;
+    }
+    return true;
   }
 
   function verdicts() {

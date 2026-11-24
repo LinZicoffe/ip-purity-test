@@ -19,12 +19,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 所有 JS 都是挂在 `window.IPQ` 上的 IIFE 模块，无 ES module、无打包。**`index.html` 中的 script 顺序即依赖顺序**，必须保持：`data → api → checks → score → ui → app`。
 
 - `assets/js/data.js` — 全部可调配置：AI 服务定义、OpenAI/Anthropic 支持地区码集合（带 `regionsChecked` 日期）、已知机房 ASN 表、机房关键词、中文标签。更新地区支持情况时改这里，并同步日期。
-- `assets/js/api.js` — 唯一网络层 `API.request(url, opts)`：**永不 reject**，总是 resolve `{ ok, status, data, latencyMs, error }`；默认 9s 超时、`no-store`、`credentials: omit`；`type: 'text'` 时不做 JSON 解析；外层 `signal` 可取消。另有 `parseTrace()` 解析 Cloudflare `cdn-cgi/trace` 的 `key=value` 行。
+- `assets/js/api.js` — 唯一网络层 `API.request(url, opts)`：**永不 reject**，总是 resolve `{ ok, status, data, latencyMs, error }`；默认 9s 超时、`no-store`、`credentials: omit`；`type: 'text'` 时不做 JSON 解析；非 text 且 JSON 解析失败时 `ok` 为 false。外层 `signal` 可取消。另有 `parseTrace()` 解析 Cloudflare `cdn-cgi/trace` 的 `key=value` 行。
 - `assets/js/checks.js` — 采样与判定逻辑：
   - `exitIp()`：依次尝试 Cloudflare trace → IPinfo → ipify → ipapi.co，取第一个有效 IP 即返回，并携带该来源的 ASN/geo 线索。
-  - `intel(ip, signal, fallback)`：IPinfo widget → （仅 HTTP 页面）ip-api.com → IPinfo 基础信息 → ipapi.co，最后用 ASN 表/关键词启发式判断是否机房 IP。回退数据源必须通过 `sameIp()` 校验返回地址与目标一致，否则忽略（分流场景下会返回别人的出口）。
-  - `service()` / `verdict()`：每个服务并发请求 `<host>/cdn-cgi/trace` 与官方 API。`400/401/404/405/429`，以及带 API 错误 JSON、且不是地区限制的 `403`，视为可达。地区限制为「地区受限」；没有 API 错误 JSON 的 `403` 仍是封禁。Claude 的 `permission_error` 只有错误信息写明国家/地区，或 trace 地区不在支持列表内时，才算地区受限。服务看到的出口与已评估 IP 不同时，不套用该 IP 的风险标记。
-  - `ipv6()`、`webrtc()`（STUN 候选收集）、`classifyAddresses()`（公网/内网/mDNS 分类与泄漏判定；只把同协议且与出口不同的公网地址算作泄漏）、`summarizeExits()`（IPv4 与 IPv6 分别比较出口是否一致）。
+  - `intel(ip, signal, fallback)`：IPinfo widget → （仅 HTTP 页面）ip-api.com → IPinfo 基础信息 → ipapi.co，最后用 ASN 表/关键词启发式判断是否机房 IP。widget 和回退数据源都必须通过 `sameIp()` 校验返回地址与目标一致，否则忽略（分流场景下会返回别人的出口）。ip-api 缺少布尔字段时保留 `null`，不要收成 `false`。
+  - `service()` / `verdict()`：每个服务并发请求 `<host>/cdn-cgi/trace` 与官方 API。`400/401/404/405/429`，以及带 API 错误 JSON、且不是地区限制的 `403`，视为可达。地区限制为「地区受限」；没有 API 错误 JSON 的 `403` 仍是封禁。没有地区码时 `regionListed` 保持 `null`，不按「不在支持列表」扣分；可连接但地区不在列表时状态为「可连接，地区不在支持列表」。Claude 的 `permission_error` 只有错误信息写明国家/地区，或 trace 地区不在支持列表内时，才算地区受限。服务看到的出口与已评估 IP 不同时，不套用该 IP 的风险标记，也不比较两边的地区。有 ASN 或组织名但类型标志全是 `null` 时，要提示无法评估风控风险。
+  - `ipv6()`、`webrtc()`（STUN 候选收集）、`classifyAddresses()`（公网/内网/mDNS 分类与泄漏判定；只把同协议且与出口不同的公网地址算作泄漏；`fe80::/10` 算内网。没有出口 IP，或超时前候选还没收集完，结论是无法判断，不算未发现泄漏）、`summarizeExits()`（IPv4 与 IPv6 分别比较出口是否一致；同一协议不足两个地址时 `mismatch` 为 `null`，界面显示无法判断）。
 - `assets/js/score.js` — 评分从 100 扣起，明细按「网络身份 / 隐私标记 / AI 服务 / 出口与泄漏」分组。机房按情报准确度扣 35（高）/ 28（中）/ 18（低，仅 ASN 或组织名推断）。商业宽带 10，教育网 16。隐私标记 Tor 45、VPN 24、代理 22、中继 18；同时命中时第二项按一半、其后按四分之一，合计最多 50，超出部分从较弱项减起。每个 AI 服务无法连接或地区受限扣 16，可连接但地区不在支持列表扣 8，合计最多 32；服务上的风控标记不重复扣。出口不一致单协议 16、双协议 20，每多一个出口再加 2，最多 24。WebRTC 泄漏 1 个地址 16、多个 20。`>=85` 纯净、`>=60` 一般，否则高风险。**拿不到出口 IP 或 IP 类型信息时返回 `total: null`**（显示「无法评分」），不要改成 0 分。机房、VPN、代理、中继、Tor 或某个 AI 服务没有数据，且把这些缺项按未命中计仍会达到纯净时，同样返回 `total: null`。
 - `assets/js/ui.js` — 所有 DOM 渲染与主题切换。HTML 一律通过这里生成，任何外部字符串必须经 `esc()` 转义。状态/徽章/色块用固定类名映射（`STATUS_BADGE`、`TYPE_CHIP` 等）。
 - `assets/js/app.js` — 编排：`run()` 重置状态后并行启动出口 IP、各 AI 服务、IPv6、WebRTC；每项完成即增量渲染，最后统一渲染一致性与评分。`runId` + `AbortController` 用于「重新检测」时丢弃上一轮迟到的结果——新增异步检查时也必须遵守 `isCurrent()` 守卫与 signal 取消。
