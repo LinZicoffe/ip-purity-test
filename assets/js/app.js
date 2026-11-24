@@ -47,6 +47,7 @@
       pending: false,
       rows: rows,
       exitIp: exitIp,
+      refV4: v4.length ? v4[0] : null,
       distinct: distinct.length,
       mismatch: distinct.length >= 2 ? true : v4.length >= 2 ? false : null,
       dualStack: !!results.ipv6 && isV4(exitIp)
@@ -58,6 +59,7 @@
   }
 
   function renderWebrtc() {
+    if (!results.webrtc) return;
     UI.renderWebrtc(CHECKS.classifyAddresses(results.webrtc, results.exit && results.exit.ip));
   }
 
@@ -67,7 +69,9 @@
       intel: results.intel || null,
       consistency: consistencyData(),
       webrtc: CHECKS.classifyAddresses(results.webrtc, results.exit && results.exit.ip),
-      services: verdicts().map(function (v) { return v.verdict; }).filter(Boolean)
+      services: verdicts().filter(function (v) { return v.verdict; }).map(function (v) {
+        return { name: v.svc.name, status: v.verdict.status };
+      })
     });
     UI.renderScore(score);
     UI.renderDetail(score);
@@ -83,6 +87,7 @@
 
     results = { exit: null, intel: undefined, services: {}, ipv6: undefined, webrtc: null };
     UI.reset();
+    UI.setBusy(true);
 
     var exitP = CHECKS.exitIp(signal).then(function (exit) {
       if (!isCurrent()) return;
@@ -92,6 +97,7 @@
       if (!exit.ip) {
         results.intel = null;
         UI.renderRisk(null);
+        renderServices();
         return;
       }
       return CHECKS.intel(exit.ip, signal, exit).then(function (intel) {
@@ -130,17 +136,16 @@
       renderWebrtc();
     });
 
-    Promise.all([exitP].concat(servicePs, [ipv6P, webrtcP])).then(function () {
-      if (isCurrent()) {
-        renderConsistency();
-        renderScore();
-      }
-    }, function (err) {
+    function finish() {
+      if (!isCurrent()) return;
+      renderConsistency();
+      renderScore();
+      UI.setBusy(false);
+    }
+
+    Promise.all([exitP].concat(servicePs, [ipv6P, webrtcP])).then(finish, function (err) {
       console.error(err);
-      if (isCurrent()) {
-        renderConsistency();
-        renderScore();
-      }
+      finish();
     });
   }
 

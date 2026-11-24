@@ -99,9 +99,13 @@
         var cur = document.documentElement.getAttribute('data-mode') || 'auto';
         apply(order[(order.indexOf(cur) + 1) % order.length]);
       });
-      if (mq) mq.addEventListener('change', function () {
+      var onSchemeChange = function () {
         if (document.documentElement.getAttribute('data-mode') === 'auto') apply('auto');
-      });
+      };
+      if (mq) {
+        if (mq.addEventListener) mq.addEventListener('change', onSchemeChange);
+        else if (mq.addListener) mq.addListener(onSchemeChange);
+      }
 
       byId('rerun-btn').addEventListener('click', opts.onRerun);
       document.addEventListener('click', function (e) {
@@ -110,10 +114,19 @@
       });
     },
 
+    setBusy: function (busy) {
+      var btn = byId('rerun-btn');
+      btn.disabled = !!busy;
+      btn.textContent = busy ? '检测中…' : '重新检测';
+      document.body.setAttribute('aria-busy', busy ? 'true' : 'false');
+    },
+
     reset: function () {
       byId('score-body').innerHTML = skeleton(['skeleton--lg', 'skeleton--w60']);
       byId('ip-body').innerHTML = skeleton(['skeleton--lg', 'skeleton--w60', 'skeleton--w80']);
-      byId('ai-body').innerHTML = '<div class="svc">' + skeleton(['skeleton--w60', 'skeleton--w80', 'skeleton--w80']) + '</div>'.repeat(2);
+      byId('ai-body').innerHTML = DATA.services.map(function () {
+        return '<div class="svc">' + skeleton(['skeleton--w60', 'skeleton--w80', 'skeleton--w80']) + '</div>';
+      }).join('');
       byId('risk-body').innerHTML = skeleton(['skeleton--w40', 'skeleton--w80', 'skeleton--w60']);
       byId('consistency-body').innerHTML = skeleton(['skeleton--w40', 'skeleton--full', 'skeleton--full']);
       byId('webrtc-body').innerHTML = skeleton(['skeleton--w40', 'skeleton--w80']);
@@ -133,13 +146,18 @@
         '<div class="score-body">' +
           '<svg class="gauge" viewBox="0 0 120 120" role="img" aria-label="纯净度评分 ' + score.total + ' 分">' +
             '<circle class="gauge-track" cx="60" cy="60" r="52"></circle>' +
-            '<circle class="gauge-value gauge-value--' + g.key + '" cx="60" cy="60" r="52" stroke-dasharray="' + CIRC.toFixed(1) + '" stroke-dashoffset="' + offset + '"></circle>' +
+            '<circle class="gauge-value gauge-value--' + g.key + '" cx="60" cy="60" r="52" stroke-dasharray="' + CIRC.toFixed(1) + '" stroke-dashoffset="' + CIRC.toFixed(1) + '"></circle>' +
             '<text class="gauge-num" x="60" y="60" text-anchor="middle">' + score.total + '</text>' +
             '<text class="gauge-unit" x="60" y="78" text-anchor="middle">/ 100</text>' +
           '</svg>' +
           '<div class="score-text"><div class="grade grade--' + g.key + '">' + esc(g.label) + '</div><p>' + esc(g.text) + '</p>' +
           '<p class="note">由 IP 类型、风险标记、出口一致性和 WebRTC 泄漏综合得出，仅供参考。</p></div>' +
         '</div>';
+      var arc = body.querySelector('.gauge-value');
+      if (arc) {
+        arc.getBoundingClientRect();
+        arc.style.strokeDashoffset = offset;
+      }
     },
 
     renderExit: function (exit, intel) {
@@ -182,6 +200,7 @@
         var v = f[x[0]];
         chips.push(chip(v === true ? 'bad' : v === false ? 'ok' : 'muted', v === true ? '已标记 ' + x[1] : v === false ? '无 ' + x[1] + ' 标记' : x[1] + ' 未知'));
       });
+      if (f.hosting === true && intel.type !== 'hosting') chips.push(chip('warn', '机房 IP'));
       if (f.mobile === true) chips.push(chip('muted', '移动网络'));
       var rows = [
         ['ASN', intel.asn ? intel.asn + (intel.asnName ? ' ' + intel.asnName : '') : null],
@@ -207,7 +226,7 @@
           ['地区检查', v.regionText]
         ];
         var notes = v.notes.concat(v.risks.length ? ['命中风险标记：' + v.risks.join('、')] : []);
-        return '<div class="svc">' +
+        return '<div class="svc svc--' + esc(v.status) + '">' +
           '<div class="svc-head"><div><div class="svc-name">' + esc(svc.name) + '<span class="svc-vendor">' + esc(svc.vendor) + '</span></div>' +
           '<div class="svc-sub">' + sub + '</div></div>' +
           '<span class="badge ' + STATUS_BADGE[v.status] + '">' + esc(v.label) + '</span></div>' +
@@ -232,15 +251,15 @@
       var head = data.mismatch
         ? badge('badge--warn', '检测到 ' + data.distinct + ' 个不同的 IPv4 出口')
         : badge('badge--ok', '各来源出口一致');
-      var table = '<table class="table"><thead><tr><th>来源</th><th>地址</th><th>结果</th></tr></thead><tbody>' +
+      var table = '<div class="table-wrap"><table class="table"><thead><tr><th>来源</th><th>地址</th><th>结果</th></tr></thead><tbody>' +
         rows.map(function (r) {
           var cls;
           var text;
           if (r.ip.indexOf(':') !== -1) { cls = 't-muted'; text = 'IPv6 地址'; }
-          else if (r.ip === data.exitIp) { cls = 't-ok'; text = '与出口一致'; }
+          else if (r.ip === data.refV4) { cls = 't-ok'; text = r.ip === data.exitIp ? '与出口一致' : '一致'; }
           else { cls = 't-bad'; text = '不一致'; }
           return '<tr><td class="c-fixed">' + esc(r.source) + '</td><td>' + esc(r.ip) + '</td><td class="c-fixed ' + cls + '">' + text + '</td></tr>';
-        }).join('') + '</tbody></table>';
+        }).join('') + '</tbody></table></div>';
       var notes = [];
       if (data.mismatch) notes.push('不同服务看到的出口 IP 不同，说明存在分流或多出口，部分请求可能没有经过代理。');
       if (data.dualStack) notes.push('当前是双栈网络：支持 IPv6 的网站可能通过另一个地址访问。');
@@ -267,11 +286,11 @@
       var leaked = {};
       result.leaked.forEach(function (i) { leaked[i.address] = true; });
       var table = result.items.length
-        ? '<table class="table"><thead><tr><th>地址</th><th>类型</th><th>协议</th></tr></thead><tbody>' +
+        ? '<div class="table-wrap"><table class="table"><thead><tr><th>地址</th><th>类型</th><th>协议</th></tr></thead><tbody>' +
           result.items.map(function (i) {
             var kind = KIND_LABEL[i.kind] + (i.kind === 'public' && i.address.indexOf(':') !== -1 ? '（IPv6）' : '');
             return '<tr><td class="' + (leaked[i.address] ? 't-bad' : '') + '">' + esc(i.address) + '</td><td class="c-fixed">' + esc(kind) + '</td><td class="c-fixed">' + esc(i.protocol) + '</td></tr>';
-          }).join('') + '</tbody></table>'
+          }).join('') + '</tbody></table></div>'
         : '';
       var h = heads[result.state] || heads.unknown;
       body.innerHTML = badge(h[0], h[1]) + table +
@@ -284,7 +303,7 @@
       var items = score.items.map(function (i) {
         var ded = i.missing
           ? '<span class="ded--miss">数据不足</span>'
-          : '<span class="' + (i.deduction ? 'ded--hit' : 'ded--zero') + '">' + (i.deduction ? (i.deduction > 0 ? '-' : '+') + Math.abs(i.deduction) : '0') + '</span>';
+          : '<span class="' + (i.deduction > 0 ? 'ded--hit' : 'ded--zero') + '">' + (i.deduction ? (i.deduction > 0 ? '-' : '+') + Math.abs(i.deduction) : '0') + '</span>';
         return '<li><span>' + esc(i.label) + '</span>' + ded + '<span class="ev">' + esc(i.evidence || '') + '</span></li>';
       }).join('');
       body.innerHTML = '<ul class="items">' + items + '</ul>' +
@@ -294,14 +313,15 @@
     renderFooterLinks: function (ip) {
       var nav = byId('footer-links');
       if (!ip) { nav.innerHTML = ''; return; }
+      var q = encodeURIComponent(ip);
       var links = [
-        ['IPinfo', 'https://ipinfo.io/' + ip],
-        ['Scamalytics', 'https://scamalytics.com/ip/' + ip],
-        ['AbuseIPDB', 'https://www.abuseipdb.com/check/' + ip],
-        ['VirusTotal', 'https://www.virustotal.com/gui/ip-address/' + ip]
+        ['IPinfo', 'https://ipinfo.io/' + q],
+        ['Scamalytics', 'https://scamalytics.com/ip/' + q],
+        ['AbuseIPDB', 'https://www.abuseipdb.com/check/' + q],
+        ['VirusTotal', 'https://www.virustotal.com/gui/ip-address/' + q]
       ];
       nav.innerHTML = '在其他平台查看 ' + esc(ip) + '：' + links.map(function (l) {
-        return '<a href="' + l[1] + '" target="_blank" rel="noopener noreferrer">' + esc(l[0]) + '</a>';
+        return '<a href="' + esc(l[1]) + '" target="_blank" rel="noopener noreferrer">' + esc(l[0]) + '</a>';
       }).join('');
     }
   };

@@ -1,0 +1,1997 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-mode="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="检测当前出口 IP 的类型与风险，以及能否直连 ChatGPT 和 Claude。纯前端，无后端。">
+<title>IP 纯净度测试</title>
+<script>
+(function () {
+  var mode = 'auto';
+  try { var saved = localStorage.getItem('ipq.theme'); if (saved === 'light' || saved === 'dark') mode = saved; } catch (e) {}
+  var dark = mode === 'dark' || (mode === 'auto' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-mode', mode);
+})();
+</script>
+<link rel="icon" href="data:,">
+<style>
+/* IP 纯净度测试 — 冷调"清水"配色：蓝灰底 + 深青强调，状态色只用于表达结果 */
+:root {
+  color-scheme: light;
+  --bg: #edf2f3;
+  --topbar-bg: rgba(237, 242, 243, 0.86);
+  --surface: #fbfdfd;
+  --surface-2: #f1f6f7;
+  --text: #10252c;
+  --muted: #56717b;
+  --line: #d5e2e5;
+  --accent: #0b6f6a;
+  --accent-text: #ffffff;
+  --ok: #17743f;
+  --ok-bg: #e1f3e8;
+  --warn: #9a5708;
+  --warn-bg: #fbefd6;
+  --bad: #b3261e;
+  --bad-bg: #fbe5e3;
+  --neutral-bg: #e4edef;
+  --skeleton: #e0eaec;
+  --skeleton-hi: #f1f6f7;
+  --shadow: 0 1px 2px rgba(16, 37, 44, 0.05), 0 12px 32px -16px rgba(16, 37, 44, 0.18);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0a1316;
+  --topbar-bg: rgba(10, 19, 22, 0.86);
+  --surface: #101d21;
+  --surface-2: #0c181c;
+  --text: #e2eef0;
+  --muted: #8fa7ae;
+  --line: #203238;
+  --accent: #4cc9bd;
+  --accent-text: #052321;
+  --ok: #5fd68d;
+  --ok-bg: #10301e;
+  --warn: #f2b445;
+  --warn-bg: #33260b;
+  --bad: #ff8a80;
+  --bad-bg: #3a1613;
+  --neutral-bg: #18272c;
+  --skeleton: #18272c;
+  --skeleton-hi: #223439;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -16px rgba(0, 0, 0, 0.6);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--text);
+  background: var(--bg);
+}
+
+code,
+.ip {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--topbar-bg);
+  border-bottom: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.topbar-inner {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+}
+
+.brand-sub {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background-color 0.15s, filter 0.15s;
+}
+
+.btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.btn--primary:hover {
+  color: var(--accent-text);
+  filter: brightness(1.1);
+}
+
+.btn:disabled {
+  opacity: 0.65;
+  cursor: progress;
+  filter: none;
+}
+
+.btn:disabled:hover {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.btn--sm {
+  min-height: 30px;
+  padding: 3px 12px;
+  font-size: 13px;
+}
+
+/* ---------- 版面 ---------- */
+.layout {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 24px;
+  display: grid;
+  gap: 24px;
+}
+
+.card-title,
+.section-title {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.section-title {
+  font-size: 16px;
+  color: var(--text);
+}
+
+.note {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* 顶部结论区：评分 + 出口 IP 并排 */
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.hero-score,
+.hero-ip {
+  min-width: 0;
+  padding: 24px 28px 26px;
+}
+
+.hero-ip {
+  background: var(--surface-2);
+  border-left: 1px solid var(--line);
+}
+
+.details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.panel {
+  min-width: 0;
+  padding: 18px 20px 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+/* ---------- 出口 IP ---------- */
+.ip-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.ip {
+  font-size: clamp(22px, 3.4vw, 32px);
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  word-break: break-all;
+}
+
+.rows {
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row dt {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.row dd {
+  margin: 0;
+  text-align: right;
+  word-break: break-all;
+}
+
+/* ---------- 标签 ---------- */
+.badge-line {
+  margin: 0 0 10px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.badge--ok {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.badge--warn {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.badge--bad {
+  color: var(--bad);
+  background: var(--bad-bg);
+}
+
+.badge--muted {
+  color: var(--muted);
+  background: var(--neutral-bg);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 11px;
+  border-radius: 999px;
+  font-size: 13px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: var(--neutral-bg);
+}
+
+.chip--ok {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: transparent;
+}
+
+.chip--warn {
+  color: var(--warn);
+  background: var(--warn-bg);
+  border-color: transparent;
+}
+
+.chip--bad {
+  color: var(--bad);
+  background: var(--bad-bg);
+  border-color: transparent;
+}
+
+/* ---------- 表格 ---------- */
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.table th,
+.table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  word-break: break-all;
+}
+
+.table th:first-child,
+.table td:first-child {
+  padding-left: 0;
+}
+
+.table th {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.table .c-fixed {
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.table tr:last-child td {
+  border-bottom: 0;
+}
+
+.t-ok {
+  color: var(--ok);
+}
+
+.t-bad {
+  color: var(--bad);
+}
+
+.t-muted {
+  color: var(--muted);
+}
+
+/* ---------- 评分 ---------- */
+.score-body {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+
+.gauge {
+  flex: 0 0 auto;
+  width: 148px;
+  height: 148px;
+}
+
+.gauge-track,
+.gauge-value {
+  fill: none;
+  stroke-width: 9;
+}
+
+.gauge-track {
+  stroke: var(--skeleton);
+}
+
+.gauge-value {
+  stroke-linecap: round;
+  transform: rotate(-90deg);
+  transform-origin: 60px 60px;
+  transition: stroke-dashoffset 0.9s cubic-bezier(0.22, 0.8, 0.3, 1);
+}
+
+.gauge-value--good {
+  stroke: var(--ok);
+}
+
+.gauge-value--warn {
+  stroke: var(--warn);
+}
+
+.gauge-value--bad {
+  stroke: var(--bad);
+}
+
+.gauge-num {
+  font-size: 34px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  fill: var(--text);
+}
+
+.gauge-unit {
+  font-size: 11px;
+  fill: var(--muted);
+}
+
+.score-text {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.score-text p {
+  margin: 6px 0 0;
+  font-size: 14px;
+}
+
+.grade {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.grade--good {
+  color: var(--ok);
+}
+
+.grade--warn {
+  color: var(--warn);
+}
+
+.grade--bad {
+  color: var(--bad);
+}
+
+/* ---------- AI 服务 ---------- */
+.svc-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.svc {
+  min-width: 0;
+  padding: 16px 20px 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--status, var(--line));
+  border-radius: 12px;
+}
+
+.svc--ok {
+  --status: var(--ok);
+}
+
+.svc--risk {
+  --status: var(--warn);
+}
+
+.svc--region,
+.svc--blocked {
+  --status: var(--bad);
+}
+
+.svc-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.svc-name {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.svc-vendor {
+  margin-left: 8px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.svc-sub {
+  font-size: 13px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.svc-link {
+  margin-top: 12px;
+}
+
+/* ---------- 评分明细 ---------- */
+.items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.items li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+
+.items li:last-child {
+  border-bottom: 0;
+}
+
+.items .ev {
+  flex-basis: 100%;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ded--hit {
+  color: var(--bad);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ded--zero {
+  color: var(--ok);
+}
+
+.ded--miss {
+  color: var(--muted);
+}
+
+.advice-title {
+  margin: 18px 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.advice {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 14px;
+}
+
+.advice li {
+  margin: 6px 0;
+}
+
+/* ---------- 加载骨架 ---------- */
+.skeleton {
+  height: 14px;
+  margin: 10px 0;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--skeleton) 25%, var(--skeleton-hi) 50%, var(--skeleton) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+}
+
+.skeleton--lg {
+  height: 28px;
+  width: 55%;
+}
+
+.skeleton--w40 {
+  width: 40%;
+}
+
+.skeleton--w60 {
+  width: 60%;
+}
+
+.skeleton--w80 {
+  width: 80%;
+}
+
+.skeleton--full {
+  width: 100%;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ---------- 页脚 ---------- */
+.footer {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 24px 40px;
+}
+
+.footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.footer-links a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.footer-links a:hover {
+  text-decoration: underline;
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 860px) {
+  .details,
+  .svc-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .layout {
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .topbar-inner {
+    padding: 10px 16px;
+  }
+
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hero-score,
+  .hero-ip {
+    padding: 20px;
+  }
+
+  .hero-ip {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .footer {
+    padding: 0 16px 32px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+
+  .gauge-value,
+  .btn {
+    transition: none;
+  }
+}
+
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <h1>IP 纯净度测试</h1>
+      <p class="brand-sub">检测当前出口 IP 的类型与风险，以及能否直连 ChatGPT 和 Claude</p>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn" id="theme-btn">主题：跟随系统</button>
+      <button type="button" class="btn btn--primary" id="rerun-btn">重新检测</button>
+    </div>
+  </div>
+</header>
+
+<main class="layout">
+  <div class="hero">
+    <section class="hero-score" aria-live="polite" aria-labelledby="t-score">
+      <h2 class="card-title" id="t-score">纯净度评分</h2>
+      <div id="score-body"></div>
+    </section>
+    <section class="hero-ip" aria-labelledby="t-ip">
+      <h2 class="card-title" id="t-ip">当前出口 IP</h2>
+      <div id="ip-body"></div>
+    </section>
+  </div>
+
+  <section class="ai" aria-labelledby="t-ai">
+    <h2 class="section-title" id="t-ai">AI 服务可用性</h2>
+    <div class="svc-grid" id="ai-body"></div>
+    <p class="note">脚本无法判断网页版是否弹出 Cloudflare 人机验证。如果打开后反复要求验证，说明该 IP 已被重点标记，请以实际打开结果为准。</p>
+  </section>
+
+  <div class="details">
+    <section class="panel" aria-labelledby="t-risk">
+      <h2 class="card-title" id="t-risk">IP 类型与风险</h2>
+      <div id="risk-body"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="t-cons">
+      <h2 class="card-title" id="t-cons">出口 IP 一致性</h2>
+      <div id="consistency-body"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="t-rtc">
+      <h2 class="card-title" id="t-rtc">WebRTC 泄漏</h2>
+      <div id="webrtc-body"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="t-detail">
+      <h2 class="card-title" id="t-detail">评分明细与建议</h2>
+      <div id="detail-body"></div>
+    </section>
+  </div>
+</main>
+
+<footer class="footer">
+  <p class="note">所有请求由浏览器直接发往第三方服务（Cloudflare、IPinfo、OpenAI、Anthropic 等），本页面没有后端，不收集任何数据。结果仅反映检测时刻的网络状态，评分仅供参考。</p>
+  <nav class="footer-links" id="footer-links"></nav>
+</footer>
+
+<script>
+(function (IPQ) {
+  'use strict';
+
+  function toSet(codes) {
+    return new Set(codes.split(/\s+/));
+  }
+
+  IPQ.DATA = {
+    regionsChecked: '2026-11-24',
+
+    services: [
+      {
+        id: 'chatgpt',
+        name: 'ChatGPT',
+        vendor: 'OpenAI',
+        host: 'chatgpt.com',
+        site: 'https://chatgpt.com/',
+        trace: 'https://chatgpt.com/cdn-cgi/trace',
+        api: 'https://api.openai.com/v1/models',
+        regions: 'openai'
+      },
+      {
+        id: 'claude',
+        name: 'Claude',
+        vendor: 'Anthropic',
+        host: 'claude.ai',
+        site: 'https://claude.ai/',
+        trace: 'https://claude.ai/cdn-cgi/trace',
+        api: 'https://api.anthropic.com/v1/models',
+        headers: { 'anthropic-dangerous-direct-browser-access': 'true' },
+        regions: 'anthropic'
+      }
+    ],
+
+    isRegionError: function (svc, body) {
+      if (svc.id === 'chatgpt') {
+        var err = body.error || {};
+        return err.code === 'unsupported_country_region_territory' || err.type === 'unsupported_country_region_territory';
+      }
+      return body.type === 'error' && !!body.error && body.error.type === 'permission_error';
+    },
+
+    asnTypes: {
+      16509: 'hosting',
+      14618: 'hosting',
+      8075: 'hosting',
+      15169: 'hosting',
+      14061: 'hosting',
+      24940: 'hosting',
+      16276: 'hosting',
+      20473: 'hosting',
+      45102: 'hosting',
+      45090: 'hosting',
+      31898: 'hosting',
+      45338: 'hosting',
+      63949: 'hosting'
+    },
+
+    keywords: [
+      'aws', 'amazon', 'google cloud', 'microsoft', 'azure', 'ovh', 'hetzner', 'digitalocean', 'vultr',
+      'alibaba', 'tencent', 'huawei', 'oracle', 'linode', 'akamai', 'hosting', 'datacenter',
+      '阿里云', '腾讯云', '华为云'
+    ],
+
+    regions: {
+      openai: {
+        source: 'https://developers.openai.com/api/docs/supported-countries',
+        codes: toSet('AD AE AF AG AL AM AO AR AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BR BS BT BW BZ CA CD CF CG CH CI CL CM CO CR CV CY CZ DE DJ DK DM DO DZ EC EE EG ER ES ET FI FJ FM FO FR GA GB GD GE GF GH GL GM GN GP GQ GR GT GW GY HN HR HT HU ID IE IL IN IQ IS IT JM JO JP KE KG KH KI KM KN KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MQ MR MT MU MV MW MX MY MZ NA NC NE NG NI NL NO NP NR NZ OM PA PE PF PG PH PK PL PM PS PT PW PY QA RE RO RS RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SZ TD TF TG TH TJ TL TM TN TO TR TT TV TW TZ UA UG US UY UZ VA VC VN VU WF WS YE YT ZA ZM ZW')
+      },
+      anthropic: {
+        source: 'https://www.anthropic.com/supported-countries',
+        codes: toSet('AD AE AG AL AM AO AR AT AU AZ BA BB BD BE BF BG BH BI BJ BN BO BR BS BT BW BZ CA CD CF CG CH CI CL CM CO CR CV CY CZ DE DJ DK DM DO DZ EC EE EG ER ES ET FI FJ FM FR GA GB GD GE GH GM GN GQ GR GT GW GY HN HR HT HU ID IE IL IN IQ IS IT JM JO JP KE KG KH KI KM KN KR KW KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MG MH MK ML MN MR MT MU MV MW MX MY MZ NA NE NG NI NL NO NP NR NZ OM PA PE PG PH PK PL PS PT PW PY QA RO RS RW SA SB SC SD SE SG SI SK SL SM SN SO SR SS ST SV SZ TD TG TH TJ TL TM TN TO TR TT TV TW TZ UA UG US UY UZ VA VC VN VU WS ZA ZM ZW')
+      }
+    },
+
+    typeLabels: {
+      hosting: '机房 / 云服务',
+      isp: '住宅 / 运营商宽带',
+      business: '商业宽带',
+      education: '教育网'
+    },
+
+    confidenceLabels: {
+      high: '准确度高',
+      medium: '准确度中',
+      low: '仅供参考'
+    }
+  };
+})(window.IPQ = window.IPQ || {});
+
+(function (IPQ) {
+  'use strict';
+
+  var ERR_TEXT = {
+    TIMEOUT: '请求超时',
+    ABORTED: '已取消',
+    NETWORK: '网络错误或被拦截',
+    PARSE: '返回内容无法解析'
+  };
+
+  function errText(code) {
+    if (ERR_TEXT[code]) return ERR_TEXT[code];
+    if (code && code.indexOf('HTTP_') === 0) return '服务返回 HTTP ' + code.slice(5);
+    return '未知错误';
+  }
+
+  IPQ.API = {
+    errText: errText,
+
+    // Never rejects: a failed request is a result like any other.
+    request: function (url, opts) {
+      opts = opts || {};
+      return new Promise(function (resolve) {
+        var controller = new AbortController();
+        var reason = '';
+        var outer = opts.signal;
+        var start = performance.now();
+
+        var onAbort = function () {
+          reason = 'aborted';
+          controller.abort();
+        };
+        if (outer) {
+          if (outer.aborted) onAbort();
+          else outer.addEventListener('abort', onAbort);
+        }
+        var timer = setTimeout(function () {
+          reason = 'timeout';
+          controller.abort();
+        }, opts.timeout || 9000);
+
+        function done(result) {
+          clearTimeout(timer);
+          if (outer) outer.removeEventListener('abort', onAbort);
+          resolve(result);
+        }
+
+        function fail(err) {
+          var code = err && err.name === 'AbortError' ? (reason === 'timeout' ? 'TIMEOUT' : 'ABORTED') : 'NETWORK';
+          done({
+            ok: false,
+            status: 0,
+            data: null,
+            latencyMs: Math.round(performance.now() - start),
+            error: { code: code, msg: errText(code) }
+          });
+        }
+
+        fetch(url, {
+          method: 'GET',
+          cache: 'no-store',
+          credentials: 'omit',
+          referrerPolicy: 'no-referrer',
+          headers: opts.headers || {},
+          signal: controller.signal
+        })
+          .then(function (res) {
+            return res.text().then(function (text) {
+              return { res: res, text: text };
+            });
+          })
+          .then(function (r) {
+            var error = null;
+            var data = r.text;
+            if (opts.type !== 'text') {
+              try {
+                data = r.text ? JSON.parse(r.text) : null;
+              } catch (e) {
+                error = r.res.ok ? 'PARSE' : 'HTTP_' + r.res.status;
+              }
+            }
+            if (!error && !r.res.ok) error = 'HTTP_' + r.res.status;
+            done({
+              ok: r.res.ok,
+              status: r.res.status,
+              data: data,
+              latencyMs: Math.round(performance.now() - start),
+              error: error ? { code: error, msg: errText(error) } : null
+            });
+          })
+          .catch(fail);
+      });
+    },
+
+    parseTrace: function (text) {
+      var out = {};
+      String(text || '').split(/\r?\n/).forEach(function (line) {
+        var i = line.indexOf('=');
+        if (i > 0) out[line.slice(0, i)] = line.slice(i + 1);
+      });
+      return out;
+    }
+  };
+})(window.IPQ = window.IPQ || {});
+
+(function (IPQ) {
+  'use strict';
+
+  var API = IPQ.API;
+  var DATA = IPQ.DATA;
+
+  var EXIT_SOURCES = [
+    { name: 'Cloudflare', url: 'https://www.cloudflare.com/cdn-cgi/trace', type: 'text' },
+    { name: 'IPinfo', url: 'https://ipinfo.io/json' },
+    { name: 'ipify', url: 'https://api64.ipify.org?format=json' },
+    { name: 'ipapi.co', url: 'https://ipapi.co/json/' }
+  ];
+
+  var IP_API_FIELDS = 'status,message,country,countryCode,regionName,city,isp,org,as,asname,mobile,proxy,hosting';
+
+  var STUN_SERVERS = ['stun.cloudflare.com:3478', 'stun.l.google.com:19302', 'stun.miwifi.com:3478', 'stun.qq.com:3478'];
+
+  function isV4(ip) {
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip || '');
+  }
+
+  function extractAsn(str) {
+    var m = /AS?(\d+)/i.exec(str || '');
+    return m ? 'AS' + m[1] : null;
+  }
+
+  function fail(r) {
+    return r && r.error ? r.error.msg : '无有效数据';
+  }
+
+  function pickGeo(d) {
+    return {
+      country: d.country_code || d.country || null,
+      countryName: d.country_name || null,
+      region: d.region || null,
+      city: d.city || null
+    };
+  }
+
+  function flag(v) {
+    return typeof v === 'boolean' ? v : null;
+  }
+
+  function fromIpinfo(ip, d) {
+    var p = d.privacy || {};
+    var type = (d.company && d.company.type) || (d.asn && d.asn.type) || null;
+    var hosting = flag(p.hosting);
+    if (hosting === null) hosting = flag(d.is_hosting);
+    if (hosting === null && type) hosting = type === 'hosting';
+    return {
+      ip: d.ip || ip,
+      source: 'IPinfo',
+      confidence: 'high',
+      asn: (d.asn && d.asn.asn) || null,
+      asnName: (d.asn && d.asn.name) || null,
+      org: (d.company && d.company.name) || null,
+      route: (d.asn && d.asn.route) || null,
+      hostname: d.hostname || null,
+      timezone: d.timezone || null,
+      type: type,
+      flags: {
+        hosting: hosting,
+        vpn: flag(p.vpn),
+        proxy: flag(p.proxy),
+        tor: flag(p.tor),
+        relay: flag(p.relay),
+        mobile: flag(d.is_mobile)
+      },
+      geo: { country: d.country || null, countryName: null, region: d.region || null, city: d.city || null },
+      errors: []
+    };
+  }
+
+  function fromIpApi(d) {
+    return {
+      ip: d.query,
+      source: 'ip-api.com',
+      confidence: 'medium',
+      asn: extractAsn(d.as),
+      asnName: d.asname || null,
+      org: d.isp || d.org || null,
+      route: null,
+      hostname: null,
+      timezone: null,
+      type: d.hosting ? 'hosting' : null,
+      flags: {
+        hosting: !!d.hosting,
+        vpn: null,
+        proxy: !!d.proxy,
+        tor: null,
+        relay: null,
+        mobile: !!d.mobile
+      },
+      geo: {
+        country: d.countryCode || null,
+        countryName: d.country || null,
+        region: d.regionName || null,
+        city: d.city || null
+      },
+      errors: []
+    };
+  }
+
+  function heuristicHosting(base) {
+    var asnNum = base.asn ? base.asn.replace(/^AS/i, '') : '';
+    if (asnNum && DATA.asnTypes[asnNum] === 'hosting') return true;
+    var text = [base.org, base.asnName, base.hostname].filter(Boolean).join(' ').toLowerCase();
+    return DATA.keywords.some(function (k) {
+      k = k.toLowerCase();
+      if (/^[a-z0-9]{1,4}$/.test(k)) return new RegExp('(^|[^a-z0-9])' + k + '([^a-z0-9]|$)').test(text);
+      return text.indexOf(k) !== -1;
+    }) ? true : null;
+  }
+
+  function isPrivateV4(addr) {
+    var p = addr.split('.').map(Number);
+    if (p.length !== 4 || p.some(isNaN)) return false;
+    if (p[0] === 10 || p[0] === 127 || p[0] === 0) return true;
+    if (p[0] === 169 && p[1] === 254) return true;
+    if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;
+    if (p[0] === 192 && p[1] === 168) return true;
+    if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return true;
+    if (p[0] === 198 && (p[1] === 18 || p[1] === 19)) return true;
+    return false;
+  }
+
+  function isPrivate(addr) {
+    var a = addr.toLowerCase();
+    if (a.indexOf('::ffff:') === 0) return isPrivateV4(a.slice(7));
+    if (a === '::1' || a.indexOf('fc') === 0 || a.indexOf('fd') === 0 || a.indexOf('fe80:') === 0) return true;
+    return isV4(a) ? isPrivateV4(a) : false;
+  }
+
+  function isIpLike(ip) {
+    return typeof ip === 'string' && ip.length <= 45 && (isV4(ip) || (ip.indexOf(':') !== -1 && /^[0-9a-fA-F:.]+$/.test(ip)));
+  }
+
+  // The fallback endpoints answer for "whoever is calling", which can differ from the
+  // exit IP we are inspecting when traffic is split. Only accept a matching answer.
+  function sameIp(a, b) {
+    if (!a || !b) return false;
+    a = String(a).toLowerCase();
+    b = String(b).toLowerCase();
+    if (isV4(a) !== isV4(b)) return false;
+    return isV4(a) ? a === b : true;
+  }
+
+  function mismatchOrFail(r) {
+    return r && r.ok && r.data && (r.data.ip || r.data.query) ? '返回的是另一个出口地址，已忽略' : fail(r);
+  }
+
+  function apiHost(url) {
+    return url.replace(/^https?:\/\//, '').split('/')[0];
+  }
+
+  function candidateAddress(cand) {
+    var parts = String(cand).replace(/^a=/, '').split(/\s+/);
+    if (parts.length < 8 || !/^candidate:/.test(parts[0])) return null;
+    return { address: parts[4], protocol: parts[2].toUpperCase(), candidateType: parts[7] };
+  }
+
+  IPQ.CHECKS = {
+    exitIp: async function (signal) {
+      var errors = [];
+      for (var i = 0; i < EXIT_SOURCES.length; i++) {
+        if (signal.aborted) break;
+        var s = EXIT_SOURCES[i];
+        var r = await API.request(s.url, { type: s.type, signal: signal });
+        if (signal.aborted) break;
+        var ip = null;
+        var extra = {};
+        if (r.ok) {
+          if (s.type === 'text') {
+            var t = API.parseTrace(r.data);
+            ip = t.ip;
+            extra = { loc: t.loc, colo: t.colo };
+          } else if (r.data && typeof r.data.ip === 'string') {
+            ip = r.data.ip;
+            extra = {
+              hostname: r.data.hostname || null,
+              org: r.data.org || null,
+              asn: r.data.asn || null,
+              timezone: r.data.timezone || null,
+              geo: pickGeo(r.data)
+            };
+          }
+        }
+        if (ip && !isIpLike(ip)) ip = null;
+        if (ip) {
+          return Object.assign({ ip: ip, source: s.name, latencyMs: r.latencyMs }, extra);
+        }
+        errors.push(s.name + '：' + fail(r));
+      }
+      return { ip: null, errors: errors };
+    },
+
+    intel: async function (ip, signal, fallback) {
+      fallback = fallback || {};
+      var r = await API.request('https://ipinfo.io/widget/demo/' + encodeURIComponent(ip), { signal: signal });
+      if (signal.aborted) return null;
+      if (r.ok && r.data && r.data.data) return fromIpinfo(ip, r.data.data);
+      var errors = ['IPinfo：' + fail(r)];
+
+      // HTTP only: skipped on HTTPS pages because of mixed-content blocking.
+      if (location.protocol !== 'https:') {
+        r = await API.request('http://ip-api.com/json/?lang=zh-CN&fields=' + IP_API_FIELDS, { signal: signal });
+        if (signal.aborted) return null;
+        if (r.ok && r.data && r.data.status === 'success' && sameIp(r.data.query, ip)) return fromIpApi(r.data);
+        errors.push('ip-api.com：' + mismatchOrFail(r));
+      }
+
+      var base = {
+        asn: fallback.asn || null,
+        asnName: null,
+        org: fallback.org || null,
+        hostname: fallback.hostname || null,
+        timezone: fallback.timezone || null,
+        geo: fallback.geo || null
+      };
+      r = await API.request('https://ipinfo.io/json', { signal: signal });
+      if (signal.aborted) return null;
+      if (r.ok && r.data && sameIp(r.data.ip, ip)) {
+        base.asn = extractAsn(r.data.org) || base.asn;
+        base.org = r.data.org || base.org;
+        base.hostname = r.data.hostname || base.hostname;
+        base.timezone = r.data.timezone || base.timezone;
+        base.geo = base.geo || pickGeo(r.data);
+      } else {
+        errors.push('IPinfo（基础信息）：' + mismatchOrFail(r));
+      }
+      if (!base.asn && !base.org) {
+        r = await API.request('https://ipapi.co/json/', { signal: signal });
+        if (signal.aborted) return null;
+        if (r.ok && r.data && sameIp(r.data.ip, ip)) {
+          base.asn = r.data.asn || null;
+          base.org = r.data.org || null;
+          base.geo = base.geo || pickGeo(r.data);
+        } else {
+          errors.push('ipapi.co：' + mismatchOrFail(r));
+        }
+      }
+
+      var hosting = heuristicHosting(base);
+      if (!base.asn && !base.org) {
+        return { ip: ip, source: null, confidence: null, asn: null, asnName: null, org: null, route: null,
+          hostname: base.hostname, timezone: base.timezone, type: null, flags: null, geo: base.geo, errors: errors };
+      }
+      return {
+        ip: ip,
+        source: 'ASN / 组织名推断',
+        confidence: 'low',
+        asn: base.asn,
+        asnName: null,
+        org: base.org,
+        route: null,
+        hostname: base.hostname,
+        timezone: base.timezone,
+        type: hosting ? 'hosting' : null,
+        flags: { hosting: hosting, vpn: null, proxy: null, tor: null, relay: null, mobile: null },
+        geo: base.geo,
+        errors: errors
+      };
+    },
+
+    service: function (svc, signal) {
+      return Promise.all([
+        API.request(svc.trace, { type: 'text', signal: signal }),
+        API.request(svc.api, { headers: svc.headers, signal: signal })
+      ]).then(function (r) {
+        return { trace: r[0], api: r[1] };
+      });
+    },
+
+    verdict: function (svc, res, intel) {
+      var trace = res.trace;
+      var api = res.api;
+      var t = trace.ok ? API.parseTrace(trace.data) : null;
+      var tReachable = !!(t && t.ip);
+      var body = api.data && typeof api.data === 'object' && !Array.isArray(api.data) ? api.data : {};
+      var apiReachable = api.ok || [400, 401, 404, 405, 429].indexOf(api.status) !== -1;
+      var risks = [];
+      var notes = [];
+      var f = intel && intel.flags;
+      if (f) {
+        [['hosting', '机房 IP'], ['vpn', 'VPN'], ['proxy', '代理'], ['tor', 'Tor'], ['relay', '中继']].forEach(function (x) {
+          if (f[x[0]] === true) risks.push(x[1]);
+        });
+        if (intel.source === null) notes.push('未能获取 IP 类型信息，无法评估风控风险');
+      } else if (intel === undefined) {
+        notes.push('IP 类型尚未判定，结果稍后更新');
+      } else {
+        notes.push('未能获取 IP 类型信息，无法评估风控风险');
+      }
+
+      var status;
+      if (api.status === 403) status = DATA.isRegionError(svc, body) ? 'region' : 'blocked';
+      else if (apiReachable) status = risks.length ? 'risk' : 'ok';
+      else status = 'blocked';
+
+      var regionCodes = DATA.regions[svc.regions].codes;
+      var regionText = '无法判定';
+      if (tReachable) {
+        var inList = regionCodes.has(String(t.loc || '').toUpperCase());
+        regionText = inList ? '所在地区在支持列表内' : '所在地区不在支持列表内';
+        if (!inList) notes.push('Cloudflare 判定所在地区为 ' + (t.loc || '未知') + '，不在 ' + svc.vendor + ' 的支持列表内');
+        if (intel && intel.geo && intel.geo.country && intel.geo.country !== String(t.loc || '').toUpperCase()) {
+          notes.push('IP 数据库记录的地区（' + intel.geo.country + '）与 ' + svc.host + ' 判定的地区（' + t.loc + '）不一致');
+        }
+      }
+      if (!tReachable) notes.push(svc.host + ' 未连通（' + (trace.error ? trace.error.msg : '无有效数据') + '），请在浏览器中实际打开确认');
+      else if (!apiReachable && api.status === 0) {
+        notes.push(svc.host + ' 可以访问，但 ' + apiHost(svc.api) + ' 连接失败（' + (api.error ? api.error.msg : '无响应') + '）。常见原因：代理规则没有覆盖该域名、网络拦截或 DNS 问题');
+      }
+      if (status === 'region') notes.push(svc.vendor + ' 的接口返回了地区限制（HTTP 403），当前出口所在地区不受支持');
+      if (api.status === 403 && status === 'blocked') notes.push(svc.vendor + ' 拒绝了来自该 IP 的请求（HTTP 403）');
+
+      var labels = { ok: '可直连', risk: '可连接但有风控风险', region: '地区受限', blocked: '无法连接' };
+      return {
+        status: status,
+        label: labels[status],
+        risks: risks,
+        notes: notes,
+        trace: {
+          reachable: tReachable,
+          ip: tReachable ? t.ip : null,
+          loc: tReachable ? t.loc : null,
+          text: tReachable ? '可达 · ' + trace.latencyMs + ' ms' : '不可达 · ' + (trace.error ? trace.error.msg : '无有效数据')
+        },
+        api: {
+          reachable: apiReachable,
+          text: apiReachable ? '可达 · ' + api.latencyMs + ' ms'
+            : api.status > 0 ? '已拒绝 · HTTP ' + api.status
+            : '不可达 · ' + (api.error ? api.error.msg : '无响应')
+        },
+        regionText: regionText
+      };
+    },
+
+    ipv6: async function (signal) {
+      var r = await API.request('https://api6.ipify.org?format=json', { timeout: 4000, signal: signal });
+      return r.ok && r.data && r.data.ip ? r.data.ip : null;
+    },
+
+    webrtc: function (signal) {
+      return new Promise(function (resolve) {
+        if (!window.RTCPeerConnection) return resolve({ supported: false, addresses: [] });
+        var pcs = [];
+        var closeAll = function () {
+          pcs.forEach(function (pc) { try { pc.close(); } catch (e) {} });
+        };
+        try {
+          STUN_SERVERS.forEach(function (url) {
+            pcs.push(new RTCPeerConnection({ iceServers: [{ urls: 'stun:' + url }] }));
+          });
+        } catch (e) {
+          closeAll();
+          return resolve({ supported: false, addresses: [] });
+        }
+        if (signal.aborted) {
+          closeAll();
+          return resolve({ supported: true, addresses: [] });
+        }
+        var addresses = [];
+        var finished = false;
+        var pending = pcs.length;
+
+        var cleanup = function () {
+          clearTimeout(timer);
+          signal.removeEventListener('abort', onAbort);
+          pcs.forEach(function (pc) {
+            try {
+              pc.onicecandidate = null;
+              pc.close();
+            } catch (e) {}
+          });
+        };
+        var finish = function () {
+          if (finished) return;
+          finished = true;
+          cleanup();
+          resolve({ supported: true, addresses: addresses });
+        };
+        var onAbort = finish;
+        var timer = setTimeout(finish, 6000);
+        signal.addEventListener('abort', onAbort);
+
+        var step = function () {
+          pending--;
+          if (pending <= 0) finish();
+        };
+
+        pcs.forEach(function (pc) {
+          pc.onicecandidate = function (e) {
+            if (finished) return;
+            if (e.candidate && e.candidate.candidate) {
+              var addr = candidateAddress(e.candidate.candidate);
+              if (addr) addresses.push(addr);
+            } else {
+              pc.onicecandidate = null;
+              step();
+            }
+          };
+          try { pc.createDataChannel('ipq'); } catch (e) {}
+          pc.createOffer()
+            .then(function (offer) { return pc.setLocalDescription(offer); })
+            .catch(function () {
+            step();
+          });
+        });
+      });
+    },
+
+    classifyAddresses: function (raw, exitIp) {
+      var supported = !!(raw && raw.supported);
+      var seen = {};
+      var items = ((raw && raw.addresses) || []).reduce(function (acc, a) {
+        if (seen[a.address]) return acc;
+        seen[a.address] = true;
+        var kind = /\.local$/i.test(a.address) ? 'mdns' : isPrivate(a.address) ? 'private' : 'public';
+        acc.push(Object.assign({}, a, { kind: kind }));
+        return acc;
+      }, []);
+      var pub = items.filter(function (i) { return i.kind === 'public'; });
+      var leaked = pub.filter(function (i) { return !exitIp || i.address.toLowerCase() !== exitIp.toLowerCase(); });
+      var state;
+      if (!supported) state = 'unsupported';
+      else if (!exitIp && pub.length) state = 'unknown';
+      else if (leaked.length) state = 'leak';
+      else if (!items.length) state = 'unknown';
+      else state = 'clean';
+      return { state: state, items: items, leaked: leaked, exitKnown: !!exitIp };
+    }
+  };
+})(window.IPQ = window.IPQ || {});
+
+(function (IPQ) {
+  'use strict';
+
+  IPQ.SCORE = {
+    compute: function (r) {
+      if (!r.exitIp) {
+        return { total: null, grade: null, items: [], advice: ['未能获取出口 IP，请检查网络后重新检测。'] };
+      }
+
+      var intel = r.intel || null;
+      var f = (intel && intel.flags) || {};
+      var type = intel ? intel.type : null;
+      var items = [];
+      var typeKnown = !!(type || Object.keys(f).some(function (k) { return f[k] != null; }));
+
+      function item(label, known, deduction, hitEvidence, missEvidence) {
+        if (!known) {
+          items.push({ label: label, deduction: 0, missing: true });
+          return 0;
+        }
+        var d = deduction > 0 ? deduction : 0;
+        items.push({ label: label, deduction: d, evidence: d ? hitEvidence : missEvidence });
+        return d;
+      }
+
+      item('机房 / 托管 IP', f.hosting != null, f.hosting ? 35 : 0, '该 IP 属于云服务或托管机房', '非机房 IP');
+      if (type !== 'hosting') {
+        item('商业宽带', !!type, type === 'business' ? 10 : 0, '商业宽带，风控敏感度略高于住宅网络', '住宅、运营商或教育网络');
+      }
+
+      var privacy = 0;
+      privacy += item('VPN 标记', f.vpn != null, f.vpn ? 25 : 0, '已被标记为 VPN', '无 VPN 标记');
+      privacy += item('代理标记', f.proxy != null, f.proxy ? 25 : 0, '已被标记为代理', '无代理标记');
+      privacy += item('中继标记', f.relay != null, f.relay ? 20 : 0, '已被标记为中继', '无中继标记');
+      privacy += item('Tor 标记', f.tor != null, f.tor ? 60 : 0, '属于 Tor 出口节点', '无 Tor 标记');
+      if (privacy > 60) {
+        items.push({ label: '隐私类扣分上限', deduction: 60 - privacy, evidence: '多类标记叠加时，合计最多扣 60 分' });
+        privacy = 60;
+      }
+
+      var mismatch = r.consistency ? r.consistency.mismatch : null;
+      item('出口 IP 一致性', mismatch != null, mismatch ? 15 : 0, '不同服务看到的出口 IP 不一致，存在分流或多出口', '各来源出口一致');
+
+      var state = r.webrtc ? r.webrtc.state : null;
+      item('WebRTC 泄漏', state === 'leak' || state === 'clean', state === 'leak' ? 15 : 0, 'WebRTC 暴露了与出口不同的公网地址', '未发现泄漏');
+
+      if (!typeKnown) {
+        return { total: null, grade: null, items: items, advice: ['未能获取 IP 类型信息（所有 IP 情报来源均不可用），无法计算纯净度评分。'] };
+      }
+
+      var total = Math.max(0, 100 - items.reduce(function (sum, i) { return sum + i.deduction; }, 0));
+
+      var grade;
+      if (total >= 85) {
+        grade = { key: 'good', label: '纯净', text: 'IP 类型干净，适合注册和日常使用。' };
+      } else if (total >= 60) {
+        grade = { key: 'warn', label: '一般', text: '可日常访问，但用于注册或订阅账号有一定风控风险。' };
+      } else {
+        grade = { key: 'bad', label: '高风险', text: '风险信号明显，容易触发人机验证或封号，不建议用于账号操作。' };
+      }
+
+      var advice = [];
+      if (f.hosting) advice.push('当前是机房 IP：日常访问没有问题，但不建议用于注册、订阅或长期登录 ChatGPT / Claude 账号，更容易遇到人机验证。');
+      if (f.vpn || f.proxy || f.relay) advice.push('该 IP 被标记为 VPN / 代理 / 中继，风控风险较高，建议改用住宅 IP。');
+      if (f.tor) advice.push('该 IP 属于 Tor 网络，绝大多数 AI 服务会直接拒绝，请更换网络。');
+      if (mismatch) advice.push('不同服务看到的出口 IP 不一致，说明存在分流或多出口，部分请求可能没有经过代理。');
+      if (state === 'leak') advice.push('WebRTC 暴露了真实地址，建议在浏览器中禁用 WebRTC，或在代理软件中开启 UDP 转发。');
+      var unavailable = (r.services || []).filter(function (s) { return s.status === 'region' || s.status === 'blocked'; }).map(function (s) { return s.name; });
+      if (unavailable.length) advice.push(unavailable.join('、') + ' 在当前网络下不可用，请切换到受支持地区的节点后重新检测。');
+      if (!advice.length) advice.push('未发现明显的风险信号，当前 IP 适合访问 AI 服务。');
+
+      return { total: total, grade: grade, items: items, advice: advice };
+    }
+  };
+})(window.IPQ = window.IPQ || {});
+
+(function (IPQ) {
+  'use strict';
+
+  var DATA = IPQ.DATA;
+  var CIRC = 2 * Math.PI * 52;
+  var STATUS_BADGE = { ok: 'badge--ok', risk: 'badge--warn', region: 'badge--bad', blocked: 'badge--bad' };
+  var TYPE_CHIP = { hosting: 'warn', isp: 'ok', business: 'muted', education: 'ok' };
+  var KIND_LABEL = { public: '公网', private: '内网', mdns: 'mDNS 本地域名' };
+
+  var ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+  function esc(v) {
+    return v === null || v === undefined ? '' : String(v).replace(/[&<>"']/g, function (c) { return ESC[c]; });
+  }
+
+  function byId(id) {
+    return document.getElementById(id);
+  }
+
+  var regionNames = null;
+  try { regionNames = new Intl.DisplayNames(['zh-CN'], { type: 'region' }); } catch (e) {}
+
+  function countryName(code) {
+    if (!code) return '未知';
+    var c = String(code).toUpperCase();
+    var name = c;
+    try { if (regionNames) name = regionNames.of(c); } catch (e) {}
+    return name === c ? c : name + ' (' + c + ')';
+  }
+
+  function rowsHtml(rows) {
+    var html = rows.filter(function (r) { return r[1] !== null && r[1] !== undefined && r[1] !== ''; }).map(function (r) {
+      return '<div class="row"><dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd></div>';
+    }).join('');
+    return html ? '<dl class="rows">' + html + '</dl>' : '';
+  }
+
+  function skeleton(widths) {
+    return widths.map(function (w) { return '<div class="skeleton ' + w + '"></div>'; }).join('');
+  }
+
+  function chip(cls, text) {
+    return '<span class="chip chip--' + cls + '">' + esc(text) + '</span>';
+  }
+
+  function badge(cls, text) {
+    return '<p class="badge-line"><span class="badge ' + cls + '">' + esc(text) + '</span></p>';
+  }
+
+  function copyText(text, btn) {
+    function done() {
+      if (!btn) return;
+      var old = btn.textContent;
+      btn.textContent = '已复制';
+      setTimeout(function () { btn.textContent = old; }, 1500);
+    }
+    function legacy() {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        done();
+      } catch (e) {}
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, legacy);
+    } else {
+      legacy();
+    }
+  }
+
+  IPQ.UI = {
+    countryName: countryName,
+
+    init: function (opts) {
+      var btn = byId('theme-btn');
+      var mq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
+      var labels = { auto: '跟随系统', light: '浅色', dark: '深色' };
+
+      function apply(mode) {
+        var dark = mode === 'dark' || (mode === 'auto' && mq && mq.matches);
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-mode', mode);
+        btn.textContent = '主题：' + labels[mode];
+        try {
+          if (mode === 'auto') localStorage.removeItem('ipq.theme');
+          else localStorage.setItem('ipq.theme', mode);
+        } catch (e) {}
+      }
+
+      btn.textContent = '主题：' + labels[document.documentElement.getAttribute('data-mode') || 'auto'];
+      btn.addEventListener('click', function () {
+        var order = ['auto', 'light', 'dark'];
+        var cur = document.documentElement.getAttribute('data-mode') || 'auto';
+        apply(order[(order.indexOf(cur) + 1) % order.length]);
+      });
+      var onSchemeChange = function () {
+        if (document.documentElement.getAttribute('data-mode') === 'auto') apply('auto');
+      };
+      if (mq) {
+        if (mq.addEventListener) mq.addEventListener('change', onSchemeChange);
+        else if (mq.addListener) mq.addListener(onSchemeChange);
+      }
+
+      byId('rerun-btn').addEventListener('click', opts.onRerun);
+      document.addEventListener('click', function (e) {
+        var target = e.target.closest('[data-copy]');
+        if (target) copyText(target.getAttribute('data-copy'), target);
+      });
+    },
+
+    setBusy: function (busy) {
+      var btn = byId('rerun-btn');
+      btn.disabled = !!busy;
+      btn.textContent = busy ? '检测中…' : '重新检测';
+      document.body.setAttribute('aria-busy', busy ? 'true' : 'false');
+    },
+
+    reset: function () {
+      byId('score-body').innerHTML = skeleton(['skeleton--lg', 'skeleton--w60']);
+      byId('ip-body').innerHTML = skeleton(['skeleton--lg', 'skeleton--w60', 'skeleton--w80']);
+      byId('ai-body').innerHTML = DATA.services.map(function () {
+        return '<div class="svc">' + skeleton(['skeleton--w60', 'skeleton--w80', 'skeleton--w80']) + '</div>';
+      }).join('');
+      byId('risk-body').innerHTML = skeleton(['skeleton--w40', 'skeleton--w80', 'skeleton--w60']);
+      byId('consistency-body').innerHTML = skeleton(['skeleton--w40', 'skeleton--full', 'skeleton--full']);
+      byId('webrtc-body').innerHTML = skeleton(['skeleton--w40', 'skeleton--w80']);
+      byId('detail-body').innerHTML = skeleton(['skeleton--full', 'skeleton--full', 'skeleton--w80']);
+      byId('footer-links').innerHTML = '';
+    },
+
+    renderScore: function (score) {
+      var body = byId('score-body');
+      if (!score || score.total === null) {
+        body.innerHTML = '<div class="score-text"><div class="grade">无法评分</div><p>' + esc(score ? score.advice[0] : '未能获取足够的数据。') + '</p></div>';
+        return;
+      }
+      var g = score.grade;
+      var offset = (CIRC * (1 - score.total / 100)).toFixed(1);
+      body.innerHTML =
+        '<div class="score-body">' +
+          '<svg class="gauge" viewBox="0 0 120 120" role="img" aria-label="纯净度评分 ' + score.total + ' 分">' +
+            '<circle class="gauge-track" cx="60" cy="60" r="52"></circle>' +
+            '<circle class="gauge-value gauge-value--' + g.key + '" cx="60" cy="60" r="52" stroke-dasharray="' + CIRC.toFixed(1) + '" stroke-dashoffset="' + CIRC.toFixed(1) + '"></circle>' +
+            '<text class="gauge-num" x="60" y="60" text-anchor="middle">' + score.total + '</text>' +
+            '<text class="gauge-unit" x="60" y="78" text-anchor="middle">/ 100</text>' +
+          '</svg>' +
+          '<div class="score-text"><div class="grade grade--' + g.key + '">' + esc(g.label) + '</div><p>' + esc(g.text) + '</p>' +
+          '<p class="note">由 IP 类型、风险标记、出口一致性和 WebRTC 泄漏综合得出，仅供参考。</p></div>' +
+        '</div>';
+      var arc = body.querySelector('.gauge-value');
+      if (arc) {
+        arc.getBoundingClientRect(); // flush so the transition starts from an empty ring
+        arc.style.strokeDashoffset = offset;
+      }
+    },
+
+    renderExit: function (exit, intel) {
+      var body = byId('ip-body');
+      if (!exit) return;
+      if (!exit.ip) {
+        body.innerHTML = badge('badge--bad', '未能获取出口 IP') +
+          '<p class="note">' + esc((exit.errors || []).join('；') || '网络错误或被拦截') + '</p>';
+        return;
+      }
+      var geo = (intel && intel.geo) || exit.geo || {};
+      var rows = [
+        ['国家 / 地区', geo.country ? countryName(geo.country) : (exit.loc ? countryName(exit.loc) : null)],
+        ['州 / 省', geo.region],
+        ['城市', geo.city],
+        ['ASN', intel ? (intel.asn ? intel.asn + (intel.asnName ? ' ' + intel.asnName : '') : null) : (exit.asn || exit.org)],
+        ['运营商 / 组织', intel ? intel.org : null],
+        ['反向解析', intel ? intel.hostname : exit.hostname],
+        ['时区', (intel && intel.timezone) || exit.timezone],
+        ['地址来源', exit.source + ' · ' + exit.latencyMs + ' ms']
+      ];
+      body.innerHTML =
+        '<div class="ip-line"><code class="ip">' + esc(exit.ip) + '</code>' +
+        '<button type="button" class="btn btn--sm" data-copy="' + esc(exit.ip) + '">复制</button></div>' +
+        rowsHtml(rows);
+    },
+
+    renderRisk: function (intel) {
+      var body = byId('risk-body');
+      if (intel === undefined) return;
+      if (!intel || !intel.source) {
+        var errors = (intel && intel.errors) || [];
+        body.innerHTML = badge('badge--muted', '数据不足') +
+          '<p class="note">未能从任何数据源获取 IP 类型信息。' + esc(errors.join('；')) + '</p>';
+        return;
+      }
+      var f = intel.flags || {};
+      var chips = [chip(intel.type ? TYPE_CHIP[intel.type] || 'muted' : 'muted', intel.type ? DATA.typeLabels[intel.type] || intel.type : '类型未知')];
+      [['vpn', 'VPN'], ['proxy', '代理'], ['tor', 'Tor'], ['relay', '中继']].forEach(function (x) {
+        var v = f[x[0]];
+        chips.push(chip(v === true ? 'bad' : v === false ? 'ok' : 'muted', v === true ? '已标记 ' + x[1] : v === false ? '无 ' + x[1] + ' 标记' : x[1] + ' 未知'));
+      });
+      if (f.hosting === true && intel.type !== 'hosting') chips.push(chip('warn', '机房 IP'));
+      if (f.mobile === true) chips.push(chip('muted', '移动网络'));
+      var rows = [
+        ['ASN', intel.asn ? intel.asn + (intel.asnName ? ' ' + intel.asnName : '') : null],
+        ['运营商 / 组织', intel.org],
+        ['反向解析', intel.hostname],
+        ['网段', intel.route],
+        ['数据来源', intel.source + ' · ' + (DATA.confidenceLabels[intel.confidence] || '')]
+      ];
+      body.innerHTML = '<div class="chips">' + chips.join('') + '</div>' + rowsHtml(rows);
+    },
+
+    renderServices: function (list) {
+      byId('ai-body').innerHTML = list.map(function (item) {
+        if (!item.verdict) return '<div class="svc">' + skeleton(['skeleton--w60', 'skeleton--w80', 'skeleton--w80']) + '</div>';
+        var svc = item.svc;
+        var v = item.verdict;
+        var sub = v.trace.reachable
+          ? '该服务看到的出口：' + esc(v.trace.ip) + ' · ' + esc(countryName(v.trace.loc))
+          : '该服务看到的出口：无法获取';
+        var rows = [
+          ['API 接口', v.api.text],
+          ['网站连通', v.trace.text],
+          ['地区检查', v.regionText]
+        ];
+        var notes = v.notes.concat(v.risks.length ? ['命中风险标记：' + v.risks.join('、')] : []);
+        return '<div class="svc svc--' + esc(v.status) + '">' +
+          '<div class="svc-head"><div><div class="svc-name">' + esc(svc.name) + '<span class="svc-vendor">' + esc(svc.vendor) + '</span></div>' +
+          '<div class="svc-sub">' + sub + '</div></div>' +
+          '<span class="badge ' + STATUS_BADGE[v.status] + '">' + esc(v.label) + '</span></div>' +
+          rowsHtml(rows) +
+          notes.map(function (n) { return '<p class="note">' + esc(n) + '</p>'; }).join('') +
+          '<a class="btn btn--sm svc-link" href="' + svc.site + '" target="_blank" rel="noopener noreferrer">在新标签页打开 ' + esc(svc.host) + ' 实测</a>' +
+          '</div>';
+      }).join('');
+    },
+
+    renderConsistency: function (data) {
+      var body = byId('consistency-body');
+      if (!data || data.pending) return;
+      var rows = data.rows.filter(function (r) { return r.ip; });
+      if (rows.length < 2) {
+        body.innerHTML = badge('badge--muted', '数据不足') +
+          '<p class="note">' + (rows.length
+            ? '只获取到 ' + rows.length + ' 个来源的地址，无法比对。不经过代理时 ChatGPT、Claude 域名不可达属正常现象。'
+            : '所有来源都没有返回地址，无法比对。') + '</p>';
+        return;
+      }
+      var head = data.mismatch
+        ? badge('badge--warn', '检测到 ' + data.distinct + ' 个不同的 IPv4 出口')
+        : badge('badge--ok', '各来源出口一致');
+      var table = '<div class="table-wrap"><table class="table"><thead><tr><th>来源</th><th>地址</th><th>结果</th></tr></thead><tbody>' +
+        rows.map(function (r) {
+          var cls;
+          var text;
+          if (r.ip.indexOf(':') !== -1) { cls = 't-muted'; text = 'IPv6 地址'; }
+          else if (r.ip === data.refV4) { cls = 't-ok'; text = r.ip === data.exitIp ? '与出口一致' : '一致'; }
+          else { cls = 't-bad'; text = '不一致'; }
+          return '<tr><td class="c-fixed">' + esc(r.source) + '</td><td>' + esc(r.ip) + '</td><td class="c-fixed ' + cls + '">' + text + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+      var notes = [];
+      if (data.mismatch) notes.push('不同服务看到的出口 IP 不同，说明存在分流或多出口，部分请求可能没有经过代理。');
+      if (data.dualStack) notes.push('当前是双栈网络：支持 IPv6 的网站可能通过另一个地址访问。');
+      body.innerHTML = head + table + notes.map(function (n) { return '<p class="note">' + esc(n) + '</p>'; }).join('');
+    },
+
+    renderWebrtc: function (result) {
+      var body = byId('webrtc-body');
+      if (!result) return;
+      var heads = {
+        leak: ['badge--bad', '检测到泄漏'],
+        clean: ['badge--ok', '未发现泄漏'],
+        unknown: ['badge--muted', '无法判断'],
+        unsupported: ['badge--muted', '浏览器不支持 WebRTC']
+      };
+      var notes = {
+        leak: ['WebRTC 暴露了与出口 IP 不同的公网地址（已标红），真实网络可能被绕过代理访问。'],
+        clean: ['未发现与出口 IP 不同的公网地址。内网地址和 .local 域名不会暴露真实公网 IP。'],
+        unknown: [result.exitKnown
+          ? '没有收集到任何候选地址，可能是浏览器禁用了 WebRTC 或 STUN 服务器不可达。零候选不等于一定安全。'
+          : '尚未获取到出口 IP，无法比对。'],
+        unsupported: []
+      };
+      var leaked = {};
+      result.leaked.forEach(function (i) { leaked[i.address] = true; });
+      var table = result.items.length
+        ? '<div class="table-wrap"><table class="table"><thead><tr><th>地址</th><th>类型</th><th>协议</th></tr></thead><tbody>' +
+          result.items.map(function (i) {
+            var kind = KIND_LABEL[i.kind] + (i.kind === 'public' && i.address.indexOf(':') !== -1 ? '（IPv6）' : '');
+            return '<tr><td class="' + (leaked[i.address] ? 't-bad' : '') + '">' + esc(i.address) + '</td><td class="c-fixed">' + esc(kind) + '</td><td class="c-fixed">' + esc(i.protocol) + '</td></tr>';
+          }).join('') + '</tbody></table></div>'
+        : '';
+      var h = heads[result.state] || heads.unknown;
+      body.innerHTML = badge(h[0], h[1]) + table +
+        (notes[result.state] || []).map(function (n) { return '<p class="note">' + esc(n) + '</p>'; }).join('');
+    },
+
+    renderDetail: function (score) {
+      var body = byId('detail-body');
+      if (!score) return;
+      var items = score.items.map(function (i) {
+        var ded = i.missing
+          ? '<span class="ded--miss">数据不足</span>'
+          : '<span class="' + (i.deduction > 0 ? 'ded--hit' : 'ded--zero') + '">' + (i.deduction ? (i.deduction > 0 ? '-' : '+') + Math.abs(i.deduction) : '0') + '</span>';
+        return '<li><span>' + esc(i.label) + '</span>' + ded + '<span class="ev">' + esc(i.evidence || '') + '</span></li>';
+      }).join('');
+      body.innerHTML = '<ul class="items">' + items + '</ul>' +
+        (score.advice && score.advice.length ? '<p class="advice-title">建议</p><ul class="advice">' + score.advice.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul>' : '');
+    },
+
+    renderFooterLinks: function (ip) {
+      var nav = byId('footer-links');
+      if (!ip) { nav.innerHTML = ''; return; }
+      var q = encodeURIComponent(ip);
+      var links = [
+        ['IPinfo', 'https://ipinfo.io/' + q],
+        ['Scamalytics', 'https://scamalytics.com/ip/' + q],
+        ['AbuseIPDB', 'https://www.abuseipdb.com/check/' + q],
+        ['VirusTotal', 'https://www.virustotal.com/gui/ip-address/' + q]
+      ];
+      nav.innerHTML = '在其他平台查看 ' + esc(ip) + '：' + links.map(function (l) {
+        return '<a href="' + esc(l[1]) + '" target="_blank" rel="noopener noreferrer">' + esc(l[0]) + '</a>';
+      }).join('');
+    }
+  };
+})(window.IPQ = window.IPQ || {});
+
+(function (IPQ) {
+  'use strict';
+
+  var API = IPQ.API;
+  var CHECKS = IPQ.CHECKS;
+  var SCORE = IPQ.SCORE;
+  var UI = IPQ.UI;
+  var DATA = IPQ.DATA;
+
+  var runId = 0;
+  var controller = null;
+  var results = null;
+
+  function isV4(ip) {
+    return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip || '');
+  }
+
+  function verdicts() {
+    return DATA.services.map(function (svc) {
+      var res = results.services[svc.id];
+      return { svc: svc, verdict: res ? CHECKS.verdict(svc, res, results.intel) : null };
+    });
+  }
+
+  function renderServices() {
+    UI.renderServices(verdicts());
+  }
+
+  function consistencyData() {
+    var exitIp = results.exit && results.exit.ip;
+    var pending = !results.exit || results.ipv6 === undefined ||
+      DATA.services.some(function (svc) { return !results.services[svc.id]; });
+    if (pending) return { pending: true };
+    var rows = [];
+    if (exitIp) rows.push({ source: results.exit.source, ip: exitIp });
+    DATA.services.forEach(function (svc) {
+      var res = results.services[svc.id];
+      if (res.trace.ok) {
+        var t = API.parseTrace(res.trace.data);
+        if (t.ip) rows.push({ source: svc.name, ip: t.ip });
+      }
+    });
+    if (results.ipv6) rows.push({ source: 'IPv6 探测', ip: results.ipv6 });
+    var v4 = rows.filter(function (r) { return isV4(r.ip); }).map(function (r) { return r.ip; });
+    var distinct = v4.filter(function (ip, i) { return v4.indexOf(ip) === i; });
+    return {
+      pending: false,
+      rows: rows,
+      exitIp: exitIp,
+      refV4: v4.length ? v4[0] : null,
+      distinct: distinct.length,
+      mismatch: distinct.length >= 2 ? true : v4.length >= 2 ? false : null,
+      dualStack: !!results.ipv6 && isV4(exitIp)
+    };
+  }
+
+  function renderConsistency() {
+    UI.renderConsistency(consistencyData());
+  }
+
+  function renderWebrtc() {
+    if (!results.webrtc) return; // still gathering: keep the skeleton instead of a false "unsupported"
+    UI.renderWebrtc(CHECKS.classifyAddresses(results.webrtc, results.exit && results.exit.ip));
+  }
+
+  function renderScore() {
+    var score = SCORE.compute({
+      exitIp: results.exit && results.exit.ip,
+      intel: results.intel || null,
+      consistency: consistencyData(),
+      webrtc: CHECKS.classifyAddresses(results.webrtc, results.exit && results.exit.ip),
+      services: verdicts().filter(function (v) { return v.verdict; }).map(function (v) {
+        return { name: v.svc.name, status: v.verdict.status };
+      })
+    });
+    UI.renderScore(score);
+    UI.renderDetail(score);
+    UI.renderFooterLinks(results.exit && results.exit.ip);
+  }
+
+  function run() {
+    var id = ++runId;
+    if (controller) controller.abort();
+    controller = new AbortController();
+    var signal = controller.signal;
+    var isCurrent = function () { return id === runId; };
+
+    results = { exit: null, intel: undefined, services: {}, ipv6: undefined, webrtc: null };
+    UI.reset();
+    UI.setBusy(true);
+
+    var exitP = CHECKS.exitIp(signal).then(function (exit) {
+      if (!isCurrent()) return;
+      results.exit = exit;
+      UI.renderExit(exit, null);
+      renderWebrtc();
+      if (!exit.ip) {
+        results.intel = null;
+        UI.renderRisk(null);
+        renderServices();
+        return;
+      }
+      return CHECKS.intel(exit.ip, signal, exit).then(function (intel) {
+        if (!isCurrent()) return;
+        results.intel = intel || null;
+        UI.renderExit(exit, results.intel);
+        UI.renderRisk(results.intel);
+        renderServices();
+      }, function (err) {
+        if (!isCurrent()) return;
+        console.error(err);
+        results.intel = null;
+        UI.renderRisk(null);
+        renderServices();
+      });
+    });
+
+    var servicePs = DATA.services.map(function (svc) {
+      return CHECKS.service(svc, signal).then(function (res) {
+        if (!isCurrent()) return;
+        results.services[svc.id] = res;
+        renderServices();
+        renderConsistency();
+      });
+    });
+
+    var ipv6P = CHECKS.ipv6(signal).then(function (ip) {
+      if (!isCurrent()) return;
+      results.ipv6 = ip;
+      renderConsistency();
+    });
+
+    var webrtcP = CHECKS.webrtc(signal).then(function (r) {
+      if (!isCurrent()) return;
+      results.webrtc = r;
+      renderWebrtc();
+    });
+
+    function finish() {
+      if (!isCurrent()) return;
+      renderConsistency();
+      renderScore();
+      UI.setBusy(false);
+    }
+
+    Promise.all([exitP].concat(servicePs, [ipv6P, webrtcP])).then(finish, function (err) {
+      console.error(err);
+      finish();
+    });
+  }
+
+  UI.init({ onRerun: run });
+  run();
+})(window.IPQ = window.IPQ || {});
+
+</script>
+</body>
+</html>

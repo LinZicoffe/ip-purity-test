@@ -106,7 +106,9 @@
     if (asnNum && DATA.asnTypes[asnNum] === 'hosting') return true;
     var text = [base.org, base.asnName, base.hostname].filter(Boolean).join(' ').toLowerCase();
     return DATA.keywords.some(function (k) {
-      return text.indexOf(k.toLowerCase()) !== -1;
+      k = k.toLowerCase();
+      if (/^[a-z0-9]{1,4}$/.test(k)) return new RegExp('(^|[^a-z0-9])' + k + '([^a-z0-9]|$)').test(text);
+      return text.indexOf(k) !== -1;
     }) ? true : null;
   }
 
@@ -118,6 +120,7 @@
     if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true;
     if (p[0] === 192 && p[1] === 168) return true;
     if (p[0] === 100 && p[1] >= 64 && p[1] <= 127) return true;
+    if (p[0] === 198 && (p[1] === 18 || p[1] === 19)) return true;
     return false;
   }
 
@@ -126,6 +129,53 @@
     if (a.indexOf('::ffff:') === 0) return isPrivateV4(a.slice(7));
     if (a === '::1' || a.indexOf('fc') === 0 || a.indexOf('fd') === 0 || a.indexOf('fe80:') === 0) return true;
     return isV4(a) ? isPrivateV4(a) : false;
+  }
+
+  function isIpLike(ip) {
+    return typeof ip === 'string' && ip.length <= 45 && (isV4(ip) || (ip.indexOf(':') !== -1 && /^[0-9a-fA-F:.]+$/.test(ip)));
+  }
+
+  function expandV6(ip) {
+    var s = String(ip).toLowerCase().split('%')[0];
+    if (s.indexOf('.') !== -1) return null;
+    var halves = s.split('::');
+    if (halves.length > 2) return null;
+    function groups(side) {
+      if (!side) return [];
+      var out = side.split(':');
+      for (var i = 0; i < out.length; i++) {
+        if (!/^[0-9a-f]{1,4}$/.test(out[i])) return null;
+        out[i] = ('0000' + out[i]).slice(-4);
+      }
+      return out;
+    }
+    var head = groups(halves[0]);
+    if (!head) return null;
+    if (halves.length === 1) return head.length === 8 ? head.join(':') : null;
+    var tail = groups(halves[1]);
+    if (!tail) return null;
+    var missing = 8 - head.length - tail.length;
+    if (missing < 1) return null;
+    var mid = [];
+    for (var i = 0; i < missing; i++) mid.push('0000');
+    return head.concat(mid, tail).join(':');
+  }
+
+  // Fallback endpoints answer for whoever is calling, which can differ from the
+  // exit IP under split routing. Accept only an answer for the same address.
+  function sameIp(a, b) {
+    if (!a || !b) return false;
+    a = String(a).trim();
+    b = String(b).trim();
+    if (isV4(a) || isV4(b)) return isV4(a) && isV4(b) && a === b;
+    var ea = expandV6(a);
+    var eb = expandV6(b);
+    if (ea && eb) return ea === eb;
+    return a.toLowerCase() === b.toLowerCase();
+  }
+
+  function mismatchOrFail(r) {
+    return r && r.ok && r.data && (r.data.ip || r.data.query) ? '返回的是另一个出口地址，已忽略' : fail(r);
   }
 
   function apiHost(url) {
@@ -164,6 +214,7 @@
             };
           }
         }
+        if (ip && !isIpLike(ip)) ip = null;
         if (ip) {
           return Object.assign({ ip: ip, source: s.name, latencyMs: r.latencyMs }, extra);
         }
@@ -183,8 +234,8 @@
       if (location.protocol !== 'https:') {
         r = await API.request('http://ip-api.com/json/?lang=zh-CN&fields=' + IP_API_FIELDS, { signal: signal });
         if (signal.aborted) return null;
-        if (r.ok && r.data && r.data.status === 'success') return fromIpApi(r.data);
-        errors.push('ip-api.com：' + fail(r));
+        if (r.ok && r.data && r.data.status === 'success' && sameIp(r.data.query, ip)) return fromIpApi(r.data);
+        errors.push('ip-api.com：' + mismatchOrFail(r));
       }
 
       var base = {
@@ -197,24 +248,24 @@
       };
       r = await API.request('https://ipinfo.io/json', { signal: signal });
       if (signal.aborted) return null;
-      if (r.ok && r.data && r.data.ip) {
+      if (r.ok && r.data && sameIp(r.data.ip, ip)) {
         base.asn = extractAsn(r.data.org) || base.asn;
         base.org = r.data.org || base.org;
         base.hostname = r.data.hostname || base.hostname;
         base.timezone = r.data.timezone || base.timezone;
         base.geo = base.geo || pickGeo(r.data);
       } else {
-        errors.push('IPinfo（基础信息）：' + fail(r));
+        errors.push('IPinfo（基础信息）：' + mismatchOrFail(r));
       }
       if (!base.asn && !base.org) {
         r = await API.request('https://ipapi.co/json/', { signal: signal });
         if (signal.aborted) return null;
-        if (r.ok && r.data && r.data.ip) {
+        if (r.ok && r.data && sameIp(r.data.ip, ip)) {
           base.asn = r.data.asn || null;
           base.org = r.data.org || null;
           base.geo = base.geo || pickGeo(r.data);
         } else {
-          errors.push('ipapi.co：' + fail(r));
+          errors.push('ipapi.co：' + mismatchOrFail(r));
         }
       }
 
@@ -255,7 +306,7 @@
       var t = trace.ok ? API.parseTrace(trace.data) : null;
       var tReachable = !!(t && t.ip);
       var body = api.data && typeof api.data === 'object' && !Array.isArray(api.data) ? api.data : {};
-      var apiReachable = api.status === 401 || api.ok;
+      var apiReachable = api.ok || [400, 401, 404, 405, 429].indexOf(api.status) !== -1;
       var risks = [];
       var notes = [];
       var f = intel && intel.flags;
@@ -286,9 +337,10 @@
         }
       }
       if (!tReachable) notes.push(svc.host + ' 未连通（' + (trace.error ? trace.error.msg : '无有效数据') + '），请在浏览器中实际打开确认');
-      else if (!apiReachable && api.error) {
-        notes.push(svc.host + ' 可以访问，但 ' + apiHost(svc.api) + ' 连接失败（' + api.error.msg + '）。常见原因：代理规则没有覆盖该域名、网络拦截或 DNS 问题');
+      else if (!apiReachable && api.status === 0) {
+        notes.push(svc.host + ' 可以访问，但 ' + apiHost(svc.api) + ' 连接失败（' + (api.error ? api.error.msg : '无响应') + '）。常见原因：代理规则没有覆盖该域名、网络拦截或 DNS 问题');
       }
+      if (status === 'region') notes.push(svc.vendor + ' 的接口返回了地区限制（HTTP 403），当前出口所在地区不受支持');
       if (api.status === 403 && status === 'blocked') notes.push(svc.vendor + ' 拒绝了来自该 IP 的请求（HTTP 403）');
 
       var labels = { ok: '可直连', risk: '可连接但有风控风险', region: '地区受限', blocked: '无法连接' };
@@ -305,7 +357,9 @@
         },
         api: {
           reachable: apiReachable,
-          text: apiReachable ? '可达 · ' + api.latencyMs + ' ms' : '不可达 · ' + (api.error ? api.error.msg : 'HTTP ' + api.status)
+          text: apiReachable ? '可达 · ' + api.latencyMs + ' ms'
+            : api.status > 0 ? '已拒绝 · HTTP ' + api.status
+            : '不可达 · ' + (api.error ? api.error.msg : '无响应')
         },
         regionText: regionText
       };
@@ -319,9 +373,22 @@
     webrtc: function (signal) {
       return new Promise(function (resolve) {
         if (!window.RTCPeerConnection) return resolve({ supported: false, addresses: [] });
-        var pcs = STUN_SERVERS.map(function (url) {
-          return new RTCPeerConnection({ iceServers: [{ urls: 'stun:' + url }] });
-        });
+        var pcs = [];
+        var closeAll = function () {
+          pcs.forEach(function (pc) { try { pc.close(); } catch (e) {} });
+        };
+        try {
+          STUN_SERVERS.forEach(function (url) {
+            pcs.push(new RTCPeerConnection({ iceServers: [{ urls: 'stun:' + url }] }));
+          });
+        } catch (e) {
+          closeAll();
+          return resolve({ supported: false, addresses: [] });
+        }
+        if (signal.aborted) {
+          closeAll();
+          return resolve({ supported: true, addresses: [] });
+        }
         var addresses = [];
         var finished = false;
         var pending = pcs.length;
@@ -362,7 +429,7 @@
               step();
             }
           };
-          pc.createDataChannel('ipq');
+          try { pc.createDataChannel('ipq'); } catch (e) {}
           pc.createOffer()
             .then(function (offer) { return pc.setLocalDescription(offer); })
             .catch(function () {
