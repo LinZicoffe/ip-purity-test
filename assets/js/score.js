@@ -76,8 +76,12 @@
       if (f.tor) advice.push('该 IP 属于 Tor 网络，绝大多数 AI 服务会直接拒绝，请更换网络。');
       if (mismatch) advice.push('不同服务看到的出口 IP 不一致，说明存在分流或多出口，部分请求可能没有经过代理。');
       if (state === 'leak') advice.push('WebRTC 暴露了真实地址，建议在浏览器中禁用 WebRTC，或在代理软件中开启 UDP 转发。');
-      var unavailable = (r.services || []).filter(function (s) { return s.status === 'region' || s.status === 'blocked'; }).map(function (s) { return s.name; });
-      if (unavailable.length) advice.push(unavailable.join('、') + ' 在当前网络下不可用，请切换到受支持地区的节点后重新检测。');
+      var unavailable = (r.services || []).filter(function (s) {
+        return s && (s.status === 'region' || s.status === 'blocked');
+      });
+      var names = unavailable.map(function (s) { return s.name; }).filter(function (name) { return name; });
+      if (names.length) advice.push(names.join('、') + ' 在当前网络下不可用，请切换到受支持地区的节点后重新检测。');
+      else if (unavailable.length) advice.push('有服务在当前网络下不可用，请切换到受支持地区的节点后重新检测。');
       if (!advice.length) advice.push('未发现明显的风险信号，当前 IP 适合访问 AI 服务。');
 
       return { total: total, grade: grade, items: items, advice: advice };
