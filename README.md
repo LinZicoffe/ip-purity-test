@@ -4,6 +4,12 @@
 
 所有请求由浏览器直接发往第三方服务，**没有后端、不收集任何数据**，可以部署在任何静态托管上。
 
+## 在线使用
+
+当前线上版本：<https://ip-purity-test.shimuhuang3.workers.dev/>
+
+用浏览器打开即可检测，无需安装。这个地址由 Cloudflare Workers 提供。
+
 ![浅色主题预览](参考/preview-light.png)
 
 ## 功能
@@ -125,6 +131,9 @@ SOFTWARE.
 ## 更新日志
 
 ### 2026-11-24
+
+*V6*：
+- 文档更新：写明线上访问地址（README.md）
 
 *V5*：
 - 文档更新：加入 MIT 开源协议（README.md、LICENSE）
