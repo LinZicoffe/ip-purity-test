@@ -32,12 +32,18 @@
       }
     ],
 
+    // permission_error is also a key, workspace or IP-allowlist refusal.
+    // Only a message that names a country or region counts as a region block.
     isRegionError: function (svc, body) {
+      var err = (body && body.error) || {};
       if (svc.id === 'chatgpt') {
-        var err = body.error || {};
         return err.code === 'unsupported_country_region_territory' || err.type === 'unsupported_country_region_territory';
       }
-      return body.type === 'error' && !!body.error && body.error.type === 'permission_error';
+      return !!(body && body.type === 'error' && /country|region|territor/i.test(String(err.message || '')));
+    },
+
+    isPermissionError: function (body) {
+      return !!(body && body.type === 'error' && body.error && body.error.type === 'permission_error');
     },
 
     asnTypes: {

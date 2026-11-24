@@ -50,6 +50,17 @@
 
       var total = Math.max(0, 100 - items.reduce(function (sum, i) { return sum + i.deduction; }, 0));
 
+      var coreLabels = { '机房 / 托管 IP': 1, 'VPN 标记': 1, '代理标记': 1, '中继标记': 1, 'Tor 标记': 1 };
+      var missingCore = items.filter(function (i) { return i.missing && coreLabels[i.label]; });
+      if (missingCore.length && total >= 85) {
+        return {
+          total: null,
+          grade: null,
+          items: items,
+          advice: [missingCore.map(function (i) { return i.label; }).join('、') + '没有数据。这些项按未命中计分会得到纯净结果，因此本次不评分。']
+        };
+      }
+
       var grade;
       if (total >= 85) {
         grade = { key: 'good', label: '纯净', text: 'IP 类型干净，适合注册和日常使用。' };

@@ -41,15 +41,15 @@
       }
     });
     if (results.ipv6) rows.push({ source: 'IPv6 探测', ip: results.ipv6 });
-    var v4 = rows.filter(function (r) { return isV4(r.ip); }).map(function (r) { return r.ip; });
-    var distinct = v4.filter(function (ip, i) { return v4.indexOf(ip) === i; });
+    var summary = CHECKS.summarizeExits(rows, exitIp);
     return {
       pending: false,
-      rows: rows,
+      rows: summary.rows,
       exitIp: exitIp,
-      refV4: v4.length ? v4[0] : null,
-      distinct: distinct.length,
-      mismatch: distinct.length >= 2 ? true : v4.length >= 2 ? false : null,
+      refV4: summary.refV4,
+      distinctV4: summary.distinctV4,
+      distinctV6: summary.distinctV6,
+      mismatch: summary.mismatch,
       dualStack: !!results.ipv6 && isV4(exitIp)
     };
   }

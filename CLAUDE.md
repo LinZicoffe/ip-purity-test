@@ -23,9 +23,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `assets/js/checks.js` — 采样与判定逻辑：
   - `exitIp()`：依次尝试 Cloudflare trace → IPinfo → ipify → ipapi.co，取第一个有效 IP 即返回，并携带该来源的 ASN/geo 线索。
   - `intel(ip, signal, fallback)`：IPinfo widget → （仅 HTTP 页面）ip-api.com → IPinfo 基础信息 → ipapi.co，最后用 ASN 表/关键词启发式判断是否机房 IP。回退数据源必须通过 `sameIp()` 校验返回地址与目标一致，否则忽略（分流场景下会返回别人的出口）。
-  - `service()` / `verdict()`：每个服务并发请求 `<host>/cdn-cgi/trace` 与官方 API；`400/401/404/405/429` 视为可达，403 再由 `DATA.isRegionError()` 区分「地区受限」与「被封」。
-  - `ipv6()`、`webrtc()`（STUN 候选收集）、`classifyAddresses()`（公网/内网/mDNS 分类与泄漏判定）。
-- `assets/js/score.js` — 评分：从 100 扣分（机房 35、VPN/代理各 25、中继 20、Tor 60、商业宽带 10、出口不一致 15、WebRTC 泄漏 15）；隐私类扣分合计封顶 60；`>=85` 纯净、`>=60` 一般、否则高风险。**拿不到 IP 类型信息时返回 `total: null`**（显示「无法评分」），不要改成 0 分。
+  - `service()` / `verdict()`：每个服务并发请求 `<host>/cdn-cgi/trace` 与官方 API。`400/401/404/405/429`，以及带 API 错误 JSON、且不是地区限制的 `403`，视为可达。地区限制为「地区受限」；没有 API 错误 JSON 的 `403` 仍是封禁。Claude 的 `permission_error` 只有错误信息写明国家/地区，或 trace 地区不在支持列表内时，才算地区受限。服务看到的出口与已评估 IP 不同时，不套用该 IP 的风险标记。
+  - `ipv6()`、`webrtc()`（STUN 候选收集）、`classifyAddresses()`（公网/内网/mDNS 分类与泄漏判定；只把同协议且与出口不同的公网地址算作泄漏）、`summarizeExits()`（IPv4 与 IPv6 分别比较出口是否一致）。
+- `assets/js/score.js` — 评分：从 100 扣分（机房 35、VPN/代理各 25、中继 20、Tor 60、商业宽带 10、出口不一致 15、WebRTC 泄漏 15）；隐私类扣分合计封顶 60；`>=85` 纯净、`>=60` 一般、否则高风险。**拿不到 IP 类型信息时返回 `total: null`**（显示「无法评分」），不要改成 0 分。机房、VPN、代理、中继、Tor 有缺项，且乐观总分仍会达到纯净时，同样返回 `total: null`。
 - `assets/js/ui.js` — 所有 DOM 渲染与主题切换。HTML 一律通过这里生成，任何外部字符串必须经 `esc()` 转义。状态/徽章/色块用固定类名映射（`STATUS_BADGE`、`TYPE_CHIP` 等）。
 - `assets/js/app.js` — 编排：`run()` 重置状态后并行启动出口 IP、各 AI 服务、IPv6、WebRTC；每项完成即增量渲染，最后统一渲染一致性与评分。`runId` + `AbortController` 用于「重新检测」时丢弃上一轮迟到的结果——新增异步检查时也必须遵守 `isCurrent()` 守卫与 signal 取消。
 

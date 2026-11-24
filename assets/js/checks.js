@@ -11,7 +11,7 @@
     { name: 'ipapi.co', url: 'https://ipapi.co/json/' }
   ];
 
-  var IP_API_FIELDS = 'status,message,country,countryCode,regionName,city,isp,org,as,asname,mobile,proxy,hosting';
+  var IP_API_FIELDS = 'status,message,country,countryCode,regionName,city,isp,org,as,asname,mobile,proxy,hosting,query';
 
   var STUN_SERVERS = ['stun.cloudflare.com:3478', 'stun.l.google.com:19302', 'stun.miwifi.com:3478', 'stun.qq.com:3478'];
 
@@ -182,6 +182,20 @@
     return url.replace(/^https?:\/\//, '').split('/')[0];
   }
 
+  function apiErrorBody(body) {
+    return !!(body && (body.type === 'error' || (body.error && typeof body.error === 'object')));
+  }
+
+  // Claude answers unsupported countries with permission_error and often no
+  // geographic wording. That same type is also a plain permission refusal, so
+  // use it as a region signal only when the trace location is unsupported.
+  function refusesForRegion(svc, body, loc) {
+    if (DATA.isRegionError(svc, body)) return true;
+    if (svc.id !== 'claude' || !loc || !DATA.isPermissionError(body)) return false;
+    var codes = DATA.regions[svc.regions] && DATA.regions[svc.regions].codes;
+    return !!(codes && !codes.has(loc));
+  }
+
   function candidateAddress(cand) {
     var parts = String(cand).replace(/^a=/, '').split(/\s+/);
     if (parts.length < 8 || !/^candidate:/.test(parts[0])) return null;
@@ -306,11 +320,20 @@
       var t = trace.ok ? API.parseTrace(trace.data) : null;
       var tReachable = !!(t && t.ip);
       var body = api.data && typeof api.data === 'object' && !Array.isArray(api.data) ? api.data : {};
-      var apiReachable = api.ok || [400, 401, 404, 405, 429].indexOf(api.status) !== -1;
+      var loc = tReachable && t.loc ? String(t.loc).toUpperCase() : '';
+      var regionHit = api.status === 403 && refusesForRegion(svc, body, loc);
+      // JSON from the API means the host answered, including a non-region 403.
+      // A 403 without that body is an edge block and stays unreachable.
+      var apiReachable = api.ok || [400, 401, 404, 405, 429].indexOf(api.status) !== -1
+        || (api.status === 403 && !regionHit && apiErrorBody(body));
       var risks = [];
       var notes = [];
-      var f = intel && intel.flags;
-      if (f) {
+      var serviceIp = tReachable ? t.ip : null;
+      var intelApplies = !(serviceIp && intel && intel.ip) || sameIp(serviceIp, intel.ip);
+      var f = intelApplies && intel && intel.flags;
+      if (!intelApplies) {
+        notes.push('该服务看到的出口与已评估的 IP 不同，未套用机房、VPN 等风险标记');
+      } else if (f) {
         [['hosting', '机房 IP'], ['vpn', 'VPN'], ['proxy', '代理'], ['tor', 'Tor'], ['relay', '中继']].forEach(function (x) {
           if (f[x[0]] === true) risks.push(x[1]);
         });
@@ -322,7 +345,7 @@
       }
 
       var status;
-      if (api.status === 403) status = DATA.isRegionError(svc, body) ? 'region' : 'blocked';
+      if (regionHit) status = 'region';
       else if (apiReachable) status = risks.length ? 'risk' : 'ok';
       else status = 'blocked';
 
@@ -450,14 +473,58 @@
         return acc;
       }, []);
       var pub = items.filter(function (i) { return i.kind === 'public'; });
-      var leaked = pub.filter(function (i) { return !exitIp || i.address.toLowerCase() !== exitIp.toLowerCase(); });
+      var sameFamily = function (addr) {
+        return !!exitIp && isV4(addr) === isV4(exitIp);
+      };
+      var otherFamily = pub.filter(function (i) { return exitIp && !sameFamily(i.address); });
+      // Different address families are not a leak: a dual-stack host always has both.
+      var leaked = pub.filter(function (i) {
+        return sameFamily(i.address) && !sameIp(i.address, exitIp);
+      });
       var state;
       if (!supported) state = 'unsupported';
       else if (!exitIp && pub.length) state = 'unknown';
       else if (leaked.length) state = 'leak';
       else if (!items.length) state = 'unknown';
+      else if (otherFamily.length && !pub.some(function (i) { return sameFamily(i.address); })) state = 'unknown';
       else state = 'clean';
-      return { state: state, items: items, leaked: leaked, exitKnown: !!exitIp };
+      return { state: state, items: items, leaked: leaked, exitKnown: !!exitIp, otherFamily: otherFamily };
+    },
+
+    summarizeExits: function (rows, exitIp) {
+      var list = (rows || []).filter(function (r) { return r && r.ip; });
+      var v4 = [];
+      var v6 = [];
+      list.forEach(function (r) { (isV4(r.ip) ? v4 : v6).push(r.ip); });
+      function uniq(ips) {
+        var out = [];
+        ips.forEach(function (ip) {
+          if (!out.some(function (kept) { return sameIp(kept, ip); })) out.push(ip);
+        });
+        return out;
+      }
+      var d4 = uniq(v4);
+      var d6 = uniq(v6);
+      var comparable = v4.length >= 2 || v6.length >= 2;
+      return {
+        rows: list.map(function (r) {
+          var v6row = !isV4(r.ip);
+          var group = v6row ? v6 : v4;
+          var ref = (v6row ? d6 : d4)[0] || null;
+          return {
+            source: r.source,
+            ip: r.ip,
+            family: v6row ? 'v6' : 'v4',
+            align: group.length < 2 ? 'single' : (ref && sameIp(r.ip, ref) ? 'match' : 'diff'),
+            sameAsExit: !!(exitIp && sameIp(r.ip, exitIp))
+          };
+        }),
+        refV4: d4[0] || null,
+        refV6: d6[0] || null,
+        distinctV4: d4.length,
+        distinctV6: d6.length,
+        mismatch: comparable ? (d4.length >= 2 || d6.length >= 2) : null
+      };
     }
   };
 })(window.IPQ = window.IPQ || {});

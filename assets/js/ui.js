@@ -248,16 +248,19 @@
             : '所有来源都没有返回地址，无法比对。') + '</p>';
         return;
       }
+      var parts = [];
+      if (data.distinctV4 >= 2) parts.push(data.distinctV4 + ' 个不同的 IPv4 出口');
+      if (data.distinctV6 >= 2) parts.push(data.distinctV6 + ' 个不同的 IPv6 出口');
       var head = data.mismatch
-        ? badge('badge--warn', '检测到 ' + data.distinct + ' 个不同的 IPv4 出口')
+        ? badge('badge--warn', '检测到 ' + parts.join('，'))
         : badge('badge--ok', '各来源出口一致');
       var table = '<div class="table-wrap"><table class="table"><thead><tr><th>来源</th><th>地址</th><th>结果</th></tr></thead><tbody>' +
         rows.map(function (r) {
           var cls;
           var text;
-          if (r.ip.indexOf(':') !== -1) { cls = 't-muted'; text = 'IPv6 地址'; }
-          else if (r.ip === data.refV4) { cls = 't-ok'; text = r.ip === data.exitIp ? '与出口一致' : '一致'; }
-          else { cls = 't-bad'; text = '不一致'; }
+          if (r.align === 'diff') { cls = 't-bad'; text = '不一致'; }
+          else if (r.align === 'single' && r.family === 'v6') { cls = 't-muted'; text = 'IPv6 地址'; }
+          else { cls = 't-ok'; text = r.sameAsExit ? '与出口一致' : '一致'; }
           return '<tr><td class="c-fixed">' + esc(r.source) + '</td><td>' + esc(r.ip) + '</td><td class="c-fixed ' + cls + '">' + text + '</td></tr>';
         }).join('') + '</tbody></table></div>';
       var notes = [];
@@ -277,12 +280,18 @@
       };
       var notes = {
         leak: ['WebRTC 暴露了与出口 IP 不同的公网地址（已标红），真实网络可能被绕过代理访问。'],
-        clean: ['未发现与出口 IP 不同的公网地址。内网地址和 .local 域名不会暴露真实公网 IP。'],
+        clean: ['未发现与出口 IP 不同的同协议公网地址。内网地址和 .local 域名不会暴露真实公网 IP。'],
         unknown: [result.exitKnown
-          ? '没有收集到任何候选地址，可能是浏览器禁用了 WebRTC 或 STUN 服务器不可达。零候选不等于一定安全。'
+          ? (result.otherFamily && result.otherFamily.length
+            ? '只收集到与出口不同协议的公网地址，不能据此判断是否泄漏。'
+            : '没有收集到任何候选地址，可能是浏览器禁用了 WebRTC 或 STUN 服务器不可达。零候选不等于一定安全。')
           : '尚未获取到出口 IP，无法比对。'],
         unsupported: []
       };
+      var extra = [];
+      if (result.otherFamily && result.otherFamily.length && (result.state === 'clean' || result.state === 'leak')) {
+        extra.push((result.otherFamily[0].address.indexOf(':') !== -1 ? 'IPv6' : 'IPv4') + ' 公网地址与当前出口不是同一协议，未按泄漏计算。');
+      }
       var leaked = {};
       result.leaked.forEach(function (i) { leaked[i.address] = true; });
       var table = result.items.length
@@ -294,7 +303,7 @@
         : '';
       var h = heads[result.state] || heads.unknown;
       body.innerHTML = badge(h[0], h[1]) + table +
-        (notes[result.state] || []).map(function (n) { return '<p class="note">' + esc(n) + '</p>'; }).join('');
+        (notes[result.state] || []).concat(extra).map(function (n) { return '<p class="note">' + esc(n) + '</p>'; }).join('');
     },
 
     renderDetail: function (score) {
