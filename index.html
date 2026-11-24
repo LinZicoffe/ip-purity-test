@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light" data-mode="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="检测当前出口 IP 的类型与风险，以及能否直连 ChatGPT 和 Claude。纯前端，无后端。">
+<title>IP 纯净度测试</title>
+<script>
+(function () {
+  var mode = 'auto';
+  try { var saved = localStorage.getItem('ipq.theme'); if (saved === 'light' || saved === 'dark') mode = saved; } catch (e) {}
+  var dark = mode === 'dark' || (mode === 'auto' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-mode', mode);
+})();
+</script>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <h1>IP 纯净度测试</h1>
+      <p class="brand-sub">检测当前出口 IP 的类型与风险，以及能否直连 ChatGPT 和 Claude</p>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn" id="theme-btn">主题：跟随系统</button>
+      <button type="button" class="btn btn--primary" id="rerun-btn">重新检测</button>
+    </div>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="card card--score" aria-live="polite">
+    <h2 class="card-title">纯净度评分</h2>
+    <div id="score-body"></div>
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">当前出口 IP</h2>
+    <div id="ip-body"></div>
+  </section>
+
+  <section class="card card--wide">
+    <h2 class="card-title">AI 服务可用性</h2>
+    <div id="ai-body"></div>
+    <p class="note">脚本无法判断网页版是否弹出 Cloudflare 人机验证。如果打开后反复要求验证，说明该 IP 已被重点标记，请以实际打开结果为准。</p>
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">IP 类型与风险</h2>
+    <div id="risk-body"></div>
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">出口 IP 一致性</h2>
+    <div id="consistency-body"></div>
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">WebRTC 泄漏</h2>
+    <div id="webrtc-body"></div>
+  </section>
+
+  <section class="card">
+    <h2 class="card-title">评分明细与建议</h2>
+    <div id="detail-body"></div>
+  </section>
+</main>
+
+<footer class="footer">
+  <p class="note">所有请求由浏览器直接发往第三方服务（Cloudflare、IPinfo、OpenAI、Anthropic 等），本页面没有后端，不收集任何数据。结果仅反映检测时刻的网络状态，评分仅供参考。</p>
+  <nav class="footer-links" id="footer-links"></nav>
+</footer>
+
+<script defer src="assets/js/data.js"></script>
+<script defer src="assets/js/api.js"></script>
+<script defer src="assets/js/checks.js"></script>
+<script defer src="assets/js/score.js"></script>
+<script defer src="assets/js/ui.js"></script>
+<script defer src="assets/js/app.js"></script>
+</body>
+</html>
